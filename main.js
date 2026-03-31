@@ -37,6 +37,8 @@ const ORIENTATION_INPUT_RANGE_DEG = 18;
 const ORIENTATION_REST_DEAD_ZONE_DEG = 1.35;
 const ORIENTATION_BASELINE_LERP = 0.08;
 const ORIENTATION_IDLE_DECAY_MS = 260;
+const ORIENTATION_GAMMA_CENTER_DEAD_ZONE_DEG = 1.9;
+const ORIENTATION_GAMMA_INIT_ZERO_SNAP_DEG = 8;
 const IDB_DB_NAME = 'mind-room-db';
 const IDB_STORE_NAME = 'app-data';
 const IDB_DB_VERSION = 1;
@@ -1708,7 +1710,7 @@ function handleDeviceOrientation(event) {
 
   if (STATE.tilt.baseBeta === null || STATE.tilt.baseGamma === null) {
     STATE.tilt.baseBeta = beta;
-    STATE.tilt.baseGamma = gamma;
+    STATE.tilt.baseGamma = Math.abs(gamma) <= ORIENTATION_GAMMA_INIT_ZERO_SNAP_DEG ? 0 : gamma;
   }
 
   let deltaBeta = beta - STATE.tilt.baseBeta;
@@ -1724,8 +1726,13 @@ function handleDeviceOrientation(event) {
     deltaGamma = gamma - STATE.tilt.baseGamma;
   }
 
+  const gammaMagnitude = Math.abs(deltaGamma);
+  const gammaCentered = gammaMagnitude <= ORIENTATION_GAMMA_CENTER_DEAD_ZONE_DEG
+    ? 0
+    : Math.sign(deltaGamma) * (gammaMagnitude - ORIENTATION_GAMMA_CENTER_DEAD_ZONE_DEG);
+
   STATE.tilt.rawBeta = deltaBeta;
-  STATE.tilt.rawGamma = deltaGamma;
+  STATE.tilt.rawGamma = gammaCentered;
   STATE.tilt.active = true;
   STATE.tilt.lastEventAt = Date.now();
 }
@@ -6032,6 +6039,12 @@ function getPhysicsFriction(memo) {
   return THREE.MathUtils.lerp(PHYSICS_FRICTION_RECENT, PHYSICS_FRICTION_OLD, clamp(t, 0, 1));
 }
 
+function isPhysicsLockedMemo(memo) {
+  if (!memo?.createdAt) return false;
+  const ageMs = Date.now() - new Date(memo.createdAt).getTime();
+  return ageMs < (3 * 24 * 60 * 60 * 1000);
+}
+
 function initVisualPhysics(visual) {
   if (!visual || visual.kind !== 'asset') return;
   const memo = visual.memoIds?.length ? STATE.memos.find((m) => m.id === visual.memoIds[0]) : null;
@@ -6066,7 +6079,21 @@ function updatePhysics(delta) {
     if (visual === STATE.grabbedVisual) return;
     if (visual.dropIntro) return;
 
+    const memo = visual.memoIds?.length ? STATE.memos.find((m) => m.id === visual.memoIds[0]) : null;
     const p = visual.phys;
+
+    if (isPhysicsLockedMemo(memo)) {
+      p.vx = 0;
+      p.vz = 0;
+      p.friction = 1;
+      p.settled = true;
+      visual.object.position.x = p.restX;
+      visual.object.position.z = p.restZ;
+      visual.object.updateMatrixWorld(true);
+      return;
+    }
+
+    p.friction = getPhysicsFriction(memo);
 
     /* Desk items don't respond to tilt as much */
     const tiltScale = p.onDesk ? 0.22 : 1.0;
