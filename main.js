@@ -14,6 +14,7 @@ const HEAVY_DUMMY_MEMO_COUNTS = Object.freeze({
   emotion: 20,
 });
 const NON_DESK_SCALE_MULTIPLIER = 2;
+const BACKGROUND_ASSET_WARMUP_DELAY_MS = 180;
 
 /* ═══ Physics & Interaction Constants ═══ */
 const PHYSICS_FRICTION_RECENT = 0.9945;
@@ -1208,6 +1209,7 @@ const STATE = {
   hoverDebouncePendingRoot: null,
   mixers: [],
   templates: {},
+  templateLoadPromises: Object.create(null),
   visuals: [],
   staticDecor: [],
   room: {
@@ -1689,7 +1691,7 @@ async function init() {
   renderCategoryChips();
   syncSelectionUI();
   setupScene();
-  await loadAssets();
+  await loadAssets(getInitialAssetKeys());
   buildDeskAndDecor();
   rebuildVisuals();
   renderHistory();
@@ -1699,6 +1701,7 @@ async function init() {
   startLoop();
   STATE.appReady = true;
   hideLoadingOverlay();
+  warmRemainingAssetsInBackground();
 }
 
 
@@ -2221,7 +2224,7 @@ function finalizeListening(cancelOnly) {
       return;
     }
 
-    createMemoFromTranscript(transcript);
+    void createMemoFromTranscript(transcript);
     STATE.finalTranscript = '';
     STATE.interimTranscript = '';
   }, 40);
@@ -2248,7 +2251,7 @@ function getRecognitionLanguageBadgeLabel() {
   return 'KO·EN';
 }
 
-function createMemoFromTranscript(transcript) {
+async function createMemoFromTranscript(transcript) {
   const memo = {
     id: crypto.randomUUID(),
     category: STATE.selection.category,
@@ -2260,6 +2263,7 @@ function createMemoFromTranscript(transcript) {
 
   snapshotLiveVisualTransformsToLayoutCache();
   STATE.memos.unshift(memo);
+  await ensureAssetsForMemo(memo);
   const handledIncrementally = createAndAttachVisualForMemo(memo, memo.id);
   persistStorage();
   if (!handledIncrementally) {
@@ -2405,22 +2409,145 @@ function buildRoomShell() {
   group.add(wallGlow);
 }
 
-async function loadAssets() {
-  const loader = new GLTFLoader();
+function getTemplateFallbackFactory(key) {
+  switch (key) {
+    case 'desk': return createDeskFallback;
+    case 'note': return createNoteFallback;
+    case 'scribble': return createScribbleFallback;
+    case 'clothesFolded': return createClothesFoldedFallback;
+    case 'clothesScattered': return createClothesScatteredFallback;
+    case 'paperSingle': return () => createPaperFallback(0xe5dacb);
+    case 'paperSingle2': return () => createPaperFallback(0xd9d0e2);
+    case 'paperPile': return createPaperPileFallback;
+    case 'snack': return createSnackFallback;
+    case 'strawberry': return createStrawberryFallback;
+    case 'jar': return createJarFallback;
+    case 'burn': return createBurnFallback;
+    case 'tumbler': return createTumblerFallback;
+    default: return () => new THREE.Group();
+  }
+}
 
-  STATE.templates.note = await loadTemplate(loader, 'note', ASSET_FILES.note, createNoteFallback);
-  STATE.templates.scribble = await loadTemplate(loader, 'scribble', ASSET_FILES.scribble, createScribbleFallback);
-  STATE.templates.clothesFolded = await loadTemplate(loader, 'clothesFolded', ASSET_FILES.clothesFolded, createClothesFoldedFallback);
-  STATE.templates.clothesScattered = await loadTemplate(loader, 'clothesScattered', ASSET_FILES.clothesScattered, createClothesScatteredFallback);
-  STATE.templates.paperSingle = await loadTemplate(loader, 'paperSingle', ASSET_FILES.paperSingle, () => createPaperFallback(0xe5dacb));
-  STATE.templates.paperSingle2 = await loadTemplate(loader, 'paperSingle2', ASSET_FILES.paperSingle2, () => createPaperFallback(0xd9d0e2));
-  STATE.templates.paperPile = await loadTemplate(loader, 'paperPile', ASSET_FILES.paperPile, createPaperPileFallback);
-  STATE.templates.snack = await loadTemplate(loader, 'snack', ASSET_FILES.snack, createSnackFallback);
-  STATE.templates.strawberry = await loadTemplate(loader, 'strawberry', ASSET_FILES.strawberry, createStrawberryFallback);
-  STATE.templates.jar = await loadTemplate(loader, 'jar', ASSET_FILES.jar, createJarFallback);
-  STATE.templates.burn = await loadTemplate(loader, 'burn', ASSET_FILES.burn, createBurnFallback);
-  STATE.templates.tumbler = await loadTemplate(loader, 'tumbler', ASSET_FILES.tumbler, createTumblerFallback);
-  STATE.templates.desk = await loadTemplate(loader, 'desk', ASSET_FILES.desk, createDeskFallback);
+function getInitialAssetKeys(now = Date.now()) {
+  const keys = new Set(['desk']);
+  const { records, clutterFresh, clutterOld, routines, snacks, emotions } = partitionActiveMemosForLayout(now);
+
+  records.forEach((memo) => {
+    const cachedLayout = getLayoutCacheEntry(getRecordLayoutKey(memo));
+    if (cachedLayout?.assetKey) {
+      keys.add(cachedLayout.assetKey);
+      return;
+    }
+    keys.add((getMemoStableHash(memo, 'record-variant') % 3 === 2) ? 'scribble' : 'note');
+  });
+
+  clutterFresh.forEach((memo) => {
+    const cachedLayout = getLayoutCacheEntry(getClutterFreshLayoutKey(memo));
+    if (cachedLayout?.assetKey) {
+      keys.add(cachedLayout.assetKey);
+      return;
+    }
+    keys.add((getMemoStableHash(memo, 'clutter-variant') % 2 === 0) ? 'paperSingle' : 'paperSingle2');
+  });
+
+  if (clutterOld.length > 1) keys.add('paperPile');
+  else if (clutterOld.length === 1) keys.add('paperSingle2');
+
+  routines.forEach((memo) => {
+    const cachedLayout = getLayoutCacheEntry(getRoutineLayoutKey(memo));
+    if (cachedLayout?.assetKey) {
+      keys.add(cachedLayout.assetKey);
+      return;
+    }
+    keys.add(getAgeDays(memo.createdAt, now) >= ROUTINE_SCATTER_DAYS ? 'clothesScattered' : 'clothesFolded');
+  });
+
+  snacks.forEach((memo) => {
+    if (memo.fromEmotion) keys.add(getEmotionDecayAssetKey(memo, now));
+    else keys.add('tumbler');
+  });
+
+  emotions.forEach((memo) => {
+    keys.add(getEmotionDecayAssetKey(memo, now));
+  });
+
+  return Array.from(keys);
+}
+
+async function ensureTemplateLoaded(key, sharedLoader = null) {
+  if (STATE.templates[key]) return STATE.templates[key];
+  if (STATE.templateLoadPromises[key]) return STATE.templateLoadPromises[key];
+
+  const filename = ASSET_FILES[key];
+  const fallbackFactory = getTemplateFallbackFactory(key);
+  const loader = sharedLoader || new GLTFLoader();
+
+  const promise = loadTemplate(loader, key, filename, fallbackFactory)
+    .then((template) => {
+      STATE.templates[key] = template;
+      return template;
+    })
+    .finally(() => {
+      delete STATE.templateLoadPromises[key];
+    });
+
+  STATE.templateLoadPromises[key] = promise;
+  return promise;
+}
+
+async function loadAssets(keys = Object.keys(ASSET_FILES)) {
+  const loader = new GLTFLoader();
+  const uniqueKeys = Array.from(new Set(keys)).filter((key) => ASSET_FILES[key] && !STATE.templates[key]);
+  if (!uniqueKeys.length) return;
+  await Promise.all(uniqueKeys.map((key) => ensureTemplateLoaded(key, loader)));
+}
+
+async function ensureAssetsForMemo(memo, now = Date.now()) {
+  if (!memo || memo.clearedAt) return;
+  const keys = ['desk'];
+
+  switch (memo.category) {
+    case 'record': {
+      const cachedLayout = getLayoutCacheEntry(getRecordLayoutKey(memo));
+      keys.push(cachedLayout?.assetKey || ((getMemoStableHash(memo, 'record-variant') % 3 === 2) ? 'scribble' : 'note'));
+      break;
+    }
+    case 'clutter': {
+      const ageDays = getAgeDays(memo.createdAt, now);
+      if (ageDays >= CLUTTER_MERGE_DAYS) keys.push('paperSingle2', 'paperPile');
+      else {
+        const cachedLayout = getLayoutCacheEntry(getClutterFreshLayoutKey(memo));
+        keys.push(cachedLayout?.assetKey || ((getMemoStableHash(memo, 'clutter-variant') % 2 === 0) ? 'paperSingle' : 'paperSingle2'));
+      }
+      break;
+    }
+    case 'routine': {
+      const cachedLayout = getLayoutCacheEntry(getRoutineLayoutKey(memo));
+      keys.push(cachedLayout?.assetKey || (getAgeDays(memo.createdAt, now) >= ROUTINE_SCATTER_DAYS ? 'clothesScattered' : 'clothesFolded'));
+      break;
+    }
+    case 'snack':
+      keys.push(memo.fromEmotion ? getEmotionDecayAssetKey(memo, now) : 'tumbler');
+      break;
+    case 'emotion':
+      keys.push(getEmotionDecayAssetKey(memo, now));
+      break;
+    default:
+      break;
+  }
+
+  await loadAssets(keys);
+}
+
+function warmRemainingAssetsInBackground() {
+  const remainingKeys = Object.keys(ASSET_FILES).filter((key) => !STATE.templates[key]);
+  if (!remainingKeys.length) return;
+
+  window.setTimeout(() => {
+    loadAssets(remainingKeys).catch((error) => {
+      console.warn('Background asset warmup failed.', error);
+    });
+  }, BACKGROUND_ASSET_WARMUP_DELAY_MS);
 }
 
 async function loadTemplate(loader, key, filename, fallbackFactory) {
@@ -5988,6 +6115,7 @@ function importMemosJSON() {
       }
 
       persistStorage();
+      await loadAssets(getInitialAssetKeys());
       rebuildVisuals();
       renderHistory();
       alert(`${addedCount}개의 메모를 가져왔습니다.`);
