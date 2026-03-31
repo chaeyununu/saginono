@@ -14,42 +14,29 @@ const HEAVY_DUMMY_MEMO_COUNTS = Object.freeze({
   emotion: 20,
 });
 const NON_DESK_SCALE_MULTIPLIER = 2;
-const IS_COARSE_POINTER_DEVICE = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-  ? window.matchMedia('(pointer: coarse)').matches
-  : false;
-const IS_MOBILE_LAYOUT = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i.test((typeof navigator !== 'undefined' && navigator.userAgent) || '')
-  || IS_COARSE_POINTER_DEVICE;
-const MOBILE_MAX_PIXEL_RATIO = 1.1;
-const DESKTOP_MAX_PIXEL_RATIO = 1.5;
-const MOBILE_MAX_RENDERED_DUMMY_VISUALS = Object.freeze({
-  clutter: 8,
-  routine: 8,
-  record: 8,
-  snack: 8,
-  emotion: 8,
-});
-const MOBILE_RENDER_DUMMY_THRESHOLD = 40;
-
 
 /* ═══ Physics & Interaction Constants ═══ */
 const PHYSICS_FRICTION_RECENT = 0.96;
 const PHYSICS_FRICTION_OLD = 0.78;
 const PHYSICS_FRICTION_MID = 0.88;
-const PHYSICS_AGE_RECENT_HOURS = 72;
+const PHYSICS_AGE_RECENT_HOURS = 6;
 const PHYSICS_AGE_OLD_DAYS = 3;
-const PHYSICS_TILT_FORCE = 0.044;
-const PHYSICS_TILT_SMOOTHING = 0.22;
+const PHYSICS_TILT_FORCE = 0.035;
+const PHYSICS_TILT_SMOOTHING = 0.08;
 const PHYSICS_REST_THRESHOLD = 0.0008;
 const PHYSICS_MAX_VELOCITY = 0.35;
 const PHYSICS_THROW_MULTIPLIER = 0.018;
 const PHYSICS_THROW_FRICTION = 0.92;
 const PHYSICS_BOUNCE_FACTOR = 0.3;
-const PHYSICS_ROOM_BOUNDS = { minX: -8.5, maxX: 8.5, minZ: -5.8, maxZ: 5.4 };
-const PHYSICS_SEPARATION_RADIUS = 1.2;
-const PHYSICS_SEPARATION_FORCE = 0.012;
+const PHYSICS_ROOM_BOUNDS = { minX: -8.2, maxX: 8.8, minZ: -5.8, maxZ: 3.6 };
 const LONG_PRESS_MS = 500;
 const DRAG_DEAD_ZONE = 6;
 const VELOCITY_HISTORY_SIZE = 6;
+const MOBILE_TILT_MAX_WIDTH = 1024;
+const ORIENTATION_INPUT_RANGE_DEG = 18;
+const ORIENTATION_REST_DEAD_ZONE_DEG = 1.35;
+const ORIENTATION_BASELINE_LERP = 0.08;
+const ORIENTATION_IDLE_DECAY_MS = 260;
 const IDB_DB_NAME = 'mind-room-db';
 const IDB_STORE_NAME = 'app-data';
 const IDB_DB_VERSION = 1;
@@ -1221,12 +1208,22 @@ const STATE = {
   pendingVisualRebuild: false,
   appReady: false,
   loadingOverlay: null,
-  motionPermissionState: 'unknown',
-  motionListenerAttached: false,
+  hasOrientationPermission: false,
+  useDeviceOrientation: false,
+  orientationListenerAttached: false,
   playedEmotionRewardDropMemoIds: new Set(),
   layoutCache: Object.create(null),
   /* physics & interaction */
-  tilt: { x: 0, z: 0, rawBeta: 0, rawGamma: 0, active: false },
+  tilt: {
+    x: 0,
+    z: 0,
+    rawBeta: 0,
+    rawGamma: 0,
+    active: false,
+    baseBeta: null,
+    baseGamma: null,
+    lastEventAt: 0,
+  },
   grabbedVisual: null,
   grabState: null, /* { startTime, startX, startY, pointerId, isDragging, velocityHistory, lastX, lastY, lastTime, liftY } */
   longPressTimer: null,
@@ -1277,6 +1274,7 @@ const EASTER_SNACK_BATCH_SIZE = 5;
 const EASTER_EMOTION_BATCH_SIZE = 10;
 const EASTER_ROUTINE_BATCH_SIZE = 10;
 const EASTER_ULTRA_RARE_CHANCE = 0.0025;
+const EASTER_RA3_RELOAD_CHANCE = 0.018;
 const EASTER_RA4_COOLDOWN_MS = 12 * 60 * 1000;
 
 
@@ -1374,21 +1372,22 @@ function showEasterRa1() {
   animateAndRemove(img, [
     { opacity: 0, transform: 'translate(-50%, -50%) scale(0.82)' },
     { opacity: 1, transform: 'translate(-50%, -50%) scale(1)', offset: 0.18 },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(1.03)', offset: 0.78 },
-    { opacity: 0, transform: 'translate(-50%, -50%) scale(1.1)' },
-  ], { duration: 1320, easing: 'cubic-bezier(0.22, 0.8, 0.25, 1)', fill: 'forwards' });
+    { opacity: 1, transform: 'translate(-50%, -50%) scale(1.03)', offset: 0.84 },
+    { opacity: 0, transform: 'translate(-50%, -50%) scale(1.11)' },
+  ], { duration: 1680, easing: 'cubic-bezier(0.22, 0.8, 0.25, 1)', fill: 'forwards' });
 }
 
 function showEasterRa2() {
   const img = createEasterImage('ra2', { width: 'min(36vw, 320px)', maxWidth: '48vw', maxHeight: '48vh' });
   animateAndRemove(img, [
     { opacity: 0, transform: 'translate(-50%, -50%) scale(0.18)' },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(0.32)', offset: 0.18 },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(0.88)', offset: 0.5 },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(2.2)', offset: 0.72 },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(5.4)', offset: 0.86 },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(12.8)' },
-  ], { duration: 2060, easing: 'cubic-bezier(0.1, 0.66, 0.16, 1)', fill: 'forwards' });
+    { opacity: 1, transform: 'translate(-50%, -50%) scale(0.32)', offset: 0.14 },
+    { opacity: 1, transform: 'translate(-50%, -50%) scale(0.92)', offset: 0.38 },
+    { opacity: 1, transform: 'translate(-50%, -50%) scale(2.8)', offset: 0.62 },
+    { opacity: 1, transform: 'translate(-50%, -50%) scale(6.4)', offset: 0.8 },
+    { opacity: 1, transform: 'translate(-50%, -50%) scale(11.2)', offset: 0.9 },
+    { opacity: 0, transform: 'translate(-50%, -50%) scale(14.2)' },
+  ], { duration: 2680, easing: 'cubic-bezier(0.1, 0.66, 0.16, 1)', fill: 'forwards' });
 }
 
 function showEasterRa3() {
@@ -1423,10 +1422,10 @@ function showEasterRa4() {
   });
   animateAndRemove(img, [
     { opacity: 0, transform: 'translate(-50%, -50%) scale(0.78)' },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(1)', offset: 0.22 },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(1.02)', offset: 0.76 },
-    { opacity: 0, transform: 'translate(-50%, -50%) scale(1.08)' },
-  ], { duration: 1120, easing: 'ease-out', fill: 'forwards' });
+    { opacity: 1, transform: 'translate(-50%, -50%) scale(1)', offset: 0.2 },
+    { opacity: 1, transform: 'translate(-50%, -50%) scale(1.03)', offset: 0.8 },
+    { opacity: 0, transform: 'translate(-50%, -50%) scale(1.1)' },
+  ], { duration: 1540, easing: 'ease-out', fill: 'forwards' });
 }
 
 function showEasterRa5() {
@@ -1434,9 +1433,9 @@ function showEasterRa5() {
   animateAndRemove(img, [
     { opacity: 0, transform: 'translate(-50%, -50%) scale(0.84)' },
     { opacity: 1, transform: 'translate(-50%, -50%) scale(1)', offset: 0.2 },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(1.03)', offset: 0.78 },
+    { opacity: 1, transform: 'translate(-50%, -50%) scale(1.03)', offset: 0.84 },
     { opacity: 0, transform: 'translate(-50%, -50%) scale(1.1)' },
-  ], { duration: 1180, easing: 'cubic-bezier(0.23, 0.82, 0.24, 1)', fill: 'forwards' });
+  ], { duration: 1620, easing: 'cubic-bezier(0.23, 0.82, 0.24, 1)', fill: 'forwards' });
 }
 
 function showEasterRa6() {
@@ -1444,9 +1443,9 @@ function showEasterRa6() {
   animateAndRemove(img, [
     { opacity: 0, transform: 'translate(-50%, -50%) scale(0.82)' },
     { opacity: 1, transform: 'translate(-50%, -50%) scale(1)', offset: 0.2 },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(1.02)', offset: 0.76 },
+    { opacity: 1, transform: 'translate(-50%, -50%) scale(1.02)', offset: 0.84 },
     { opacity: 0, transform: 'translate(-50%, -50%) scale(1.08)' },
-  ], { duration: 1160, easing: 'ease-out', fill: 'forwards' });
+  ], { duration: 1600, easing: 'ease-out', fill: 'forwards' });
 }
 
 function getRealMemoCountByCategory(category) {
@@ -1461,21 +1460,19 @@ function resetDeleteStreak() {
 
 function maybeTriggerUltraRareRa4() {
   const now = Date.now();
-  if (STATE.easter.sessionRa4Shown) return;
   if (now - (STATE.easter.cooldowns.ra4 || 0) < EASTER_RA4_COOLDOWN_MS) return;
   if (Math.random() >= EASTER_ULTRA_RARE_CHANCE) return;
 
-  STATE.easter.sessionRa4Shown = true;
   STATE.easter.cooldowns.ra4 = now;
   persistEasterState();
   showEasterRa4();
 }
 
 function maybeTriggerReloadRa3() {
-  if (Math.random() >= 0.1) return;
+  if (Math.random() >= EASTER_RA3_RELOAD_CHANCE) return;
   window.setTimeout(() => {
     showEasterRa3();
-  }, 380 + Math.random() * 540);
+  }, 420 + Math.random() * 620);
 }
 
 function scheduleCreationEaster(triggerCount, validator, callback) {
@@ -1545,6 +1542,18 @@ function maybeTriggerCreationEasters(memo) {
   maybeTriggerUltraRareRa4();
 }
 
+function scheduleDeleteStreakEaster(triggerCount, triggerTime) {
+  window.setTimeout(() => {
+    const elapsedSinceLastDelete = Date.now() - (STATE.easter.lastDeleteAt || 0);
+    const stillSameStreak = STATE.easter.deleteStreakCount >= triggerCount
+      && STATE.easter.lastDeleteAt >= triggerTime
+      && elapsedSinceLastDelete <= EASTER_DELETE_STREAK_WINDOW_MS;
+
+    if (!stillSameStreak) return;
+    showEasterRa2();
+  }, EASTER_CREATION_DELAY_MS);
+}
+
 function registerDeleteActionForEaster() {
   const now = Date.now();
   const elapsed = now - (STATE.easter.lastDeleteAt || 0);
@@ -1560,9 +1569,7 @@ function registerDeleteActionForEaster() {
 
   if (STATE.easter.deleteStreakCount >= EASTER_DELETE_STREAK_TRIGGER
       && STATE.easter.deleteStreakCount % EASTER_DELETE_STREAK_TRIGGER === 0) {
-    window.setTimeout(() => {
-      showEasterRa2();
-    }, EASTER_CREATION_DELAY_MS);
+    scheduleDeleteStreakEaster(STATE.easter.deleteStreakCount, now);
   }
 
   maybeTriggerUltraRareRa4();
@@ -1651,48 +1658,126 @@ function setupButtonSoundUI() {
 init();
 
 async function init() {
+  await openIDB();
+  await loadStorage();
+  loadEasterState();
   setupButtonSoundUI();
   ensureEasterOverlayRoot();
+  const addedDummyMemoCount = ensureHeavyDummyMemos();
+  if (addedDummyMemoCount > 0) persistStorage();
+  seedPlayedEmotionRewardDropsFromExistingMemos();
   setupUI();
   renderCategoryChips();
   syncSelectionUI();
   setupScene();
-  setupDeviceOrientation();
-  setupInteraction();
-  startLoop();
-
-  await openIDB();
-  await loadStorage();
-  loadEasterState();
-  ensureHeavyDummyMemos();
-  seedPlayedEmotionRewardDropsFromExistingMemos();
-  renderHistory();
-  maybeTriggerReloadRa3();
-
   await loadAssets();
   buildDeskAndDecor();
   rebuildVisuals();
   renderHistory();
+  setupDeviceOrientation();
+  setupInteraction();
+  maybeTriggerReloadRa3();
+  startLoop();
   STATE.appReady = true;
   hideLoadingOverlay();
 }
 
+
+function isMobileTiltTarget() {
+  const hasTouch = window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+  return hasTouch && (window.innerWidth || window.screen?.width || 0) <= MOBILE_TILT_MAX_WIDTH;
+}
+
+function resetTiltState() {
+  STATE.tilt.x = 0;
+  STATE.tilt.z = 0;
+  STATE.tilt.rawBeta = 0;
+  STATE.tilt.rawGamma = 0;
+  STATE.tilt.active = false;
+  STATE.tilt.baseBeta = null;
+  STATE.tilt.baseGamma = null;
+  STATE.tilt.lastEventAt = 0;
+}
+
+function handleDeviceOrientation(event) {
+  if (!STATE.useDeviceOrientation || !isMobileTiltTarget()) return;
+  if (!Number.isFinite(event.beta) || !Number.isFinite(event.gamma)) return;
+
+  const beta = event.beta;
+  const gamma = event.gamma;
+
+  if (STATE.tilt.baseBeta === null || STATE.tilt.baseGamma === null) {
+    STATE.tilt.baseBeta = beta;
+    STATE.tilt.baseGamma = gamma;
+  }
+
+  let deltaBeta = beta - STATE.tilt.baseBeta;
+  let deltaGamma = gamma - STATE.tilt.baseGamma;
+
+  if (Math.abs(deltaBeta) < ORIENTATION_REST_DEAD_ZONE_DEG) {
+    STATE.tilt.baseBeta += (beta - STATE.tilt.baseBeta) * ORIENTATION_BASELINE_LERP;
+    deltaBeta = beta - STATE.tilt.baseBeta;
+  }
+
+  if (Math.abs(deltaGamma) < ORIENTATION_REST_DEAD_ZONE_DEG) {
+    STATE.tilt.baseGamma += (gamma - STATE.tilt.baseGamma) * ORIENTATION_BASELINE_LERP;
+    deltaGamma = gamma - STATE.tilt.baseGamma;
+  }
+
+  STATE.tilt.rawBeta = deltaBeta;
+  STATE.tilt.rawGamma = deltaGamma;
+  STATE.tilt.active = true;
+  STATE.tilt.lastEventAt = Date.now();
+}
+
+function startDeviceOrientationListener() {
+  if (STATE.orientationListenerAttached || !window.DeviceOrientationEvent) return false;
+  window.addEventListener('deviceorientation', handleDeviceOrientation, { passive: true });
+  STATE.orientationListenerAttached = true;
+  return true;
+}
+
+async function requestOrientationPermission() {
+  if (!isMobileTiltTarget()) {
+    STATE.useDeviceOrientation = false;
+    STATE.hasOrientationPermission = false;
+    resetTiltState();
+    return false;
+  }
+
+  if (STATE.hasOrientationPermission) return true;
+  if (!window.DeviceOrientationEvent) return false;
+
+  resetTiltState();
+
+  if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+    try {
+      const result = await DeviceOrientationEvent.requestPermission();
+      if (result !== 'granted') return false;
+      STATE.hasOrientationPermission = true;
+      STATE.useDeviceOrientation = true;
+      startDeviceOrientationListener();
+      return true;
+    } catch (error) {
+      console.warn('Device orientation permission error:', error);
+      return false;
+    }
+  }
+
+  STATE.hasOrientationPermission = true;
+  STATE.useDeviceOrientation = true;
+  startDeviceOrientationListener();
+  return true;
+}
+
 function setupUI() {
   UI.allowMic.addEventListener('click', async () => {
-    showLoadingOverlay('...');
-
-    const motionPromise = requestMotionPermission();
-    const micPromise = requestMicrophonePermission();
-    const [, micOk] = await Promise.all([
-      motionPromise.catch(() => false),
-      micPromise.catch(() => false),
-    ]);
-
-    if (!micOk) {
-      hideLoadingOverlay();
-      return;
+    if (isMobileTiltTarget()) {
+      await requestOrientationPermission();
     }
 
+    const ok = await requestMicrophonePermission();
+    if (!ok) return;
     UI.permissionModal.classList.remove('visible');
     ensureRecognition();
 
@@ -1858,13 +1943,6 @@ function createLoadingOverlay() {
         transform: translateY(-1px) scale(1.06);
       }
     }
-    @media (max-width: 768px), (hover: none) and (pointer: coarse) {
-      .app-loading-overlay {
-        backdrop-filter: none;
-        -webkit-backdrop-filter: none;
-        background: rgba(44, 36, 32, 0.08);
-      }
-    }
     @media (max-width: 640px) {
       .app-loading-card {
         width: min(210px, calc(100vw - 32px));
@@ -1951,11 +2029,6 @@ function canRecord() {
 
 async function requestMicrophonePermission() {
   if (STATE.hasMicPermission) return true;
-  if (!navigator?.mediaDevices?.getUserMedia) {
-    setMicBadge('idle', '불가');
-    UI.selectionCopy.textContent = '';
-    return false;
-  }
 
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -1976,56 +2049,6 @@ async function requestMicrophonePermission() {
     UI.selectionCopy.textContent = '';
     return false;
   }
-}
-
-function handleDeviceOrientationChange(event) {
-  const beta = event.beta ?? 0;
-  const gamma = event.gamma ?? 0;
-  STATE.tilt.rawBeta = beta;
-  STATE.tilt.rawGamma = gamma;
-  STATE.tilt.active = true;
-}
-
-function attachDeviceOrientationListener() {
-  if (STATE.motionListenerAttached) return true;
-  window.addEventListener('deviceorientation', handleDeviceOrientationChange, { passive: true });
-  STATE.motionListenerAttached = true;
-  return true;
-}
-
-async function requestMotionPermission() {
-  if (!IS_MOBILE_LAYOUT) {
-    STATE.motionPermissionState = 'unsupported';
-    return false;
-  }
-
-  if (STATE.motionPermissionState === 'granted') {
-    attachDeviceOrientationListener();
-    return true;
-  }
-
-  if (typeof DeviceOrientationEvent === 'undefined') {
-    STATE.motionPermissionState = 'unsupported';
-    return false;
-  }
-
-  if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-    try {
-      const response = await DeviceOrientationEvent.requestPermission();
-      const granted = response === 'granted';
-      STATE.motionPermissionState = granted ? 'granted' : 'denied';
-      if (granted) attachDeviceOrientationListener();
-      return granted;
-    } catch (error) {
-      console.warn('Motion permission error:', error);
-      STATE.motionPermissionState = 'denied';
-      return false;
-    }
-  }
-
-  STATE.motionPermissionState = 'granted';
-  attachDeviceOrientationListener();
-  return true;
 }
 
 function ensureRecognition() {
@@ -2240,7 +2263,7 @@ function updateRoomCopy(memo) {
 function setupScene() {
   const width = UI.sceneRoot.clientWidth || window.innerWidth;
   const height = UI.sceneRoot.clientHeight || window.innerHeight;
-  const isMobile = IS_MOBILE_LAYOUT || width < 768;
+  const isMobile = width < 768;
 
   const roomColor = 0xf6f1eb;
 
@@ -2258,19 +2281,13 @@ function setupScene() {
     STATE.camera.lookAt(-0.55, 1.35, -2.35);
   }
 
-  STATE.renderer = new THREE.WebGLRenderer({
-    antialias: !isMobile,
-    alpha: false,
-    powerPreference: 'high-performance',
-    stencil: false,
-  });
-  STATE.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? MOBILE_MAX_PIXEL_RATIO : DESKTOP_MAX_PIXEL_RATIO));
+  STATE.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+  STATE.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.8));
   STATE.renderer.setSize(width, height);
   STATE.renderer.outputColorSpace = THREE.SRGBColorSpace;
-  STATE.renderer.shadowMap.enabled = !isMobile;
+  STATE.renderer.shadowMap.enabled = true;
   STATE.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   STATE.renderer.toneMappingExposure = 1.08;
-  STATE.physicsEnabled = isMobile;
   UI.sceneRoot.innerHTML = '';
   UI.sceneRoot.appendChild(STATE.renderer.domElement);
 
@@ -2279,8 +2296,8 @@ function setupScene() {
 
   const key = new THREE.DirectionalLight(0xffe2c6, 1.9);
   key.position.set(5.6, 9.5, 6.4);
-  key.castShadow = !isMobile;
-  key.shadow.mapSize.set(isMobile ? 1024 : 2048, isMobile ? 1024 : 2048);
+  key.castShadow = true;
+  key.shadow.mapSize.set(2048, 2048);
   key.shadow.camera.left = -14;
   key.shadow.camera.right = 14;
   key.shadow.camera.top = 12;
@@ -2309,7 +2326,7 @@ function buildRoomShell() {
     new THREE.MeshStandardMaterial({ color: 0xe8e0d5, roughness: 0.96, metalness: 0.005 })
   );
   floor.rotation.x = -Math.PI / 2;
-  floor.receiveShadow = !!STATE.renderer?.shadowMap?.enabled;
+  floor.receiveShadow = true;
   group.add(floor);
 
   const backWall = new THREE.Mesh(
@@ -2353,30 +2370,20 @@ function buildRoomShell() {
 
 async function loadAssets() {
   const loader = new GLTFLoader();
-  const assetEntries = [
-    ['note', ASSET_FILES.note, createNoteFallback],
-    ['scribble', ASSET_FILES.scribble, createScribbleFallback],
-    ['clothesFolded', ASSET_FILES.clothesFolded, createClothesFoldedFallback],
-    ['clothesScattered', ASSET_FILES.clothesScattered, createClothesScatteredFallback],
-    ['paperSingle', ASSET_FILES.paperSingle, () => createPaperFallback(0xe5dacb)],
-    ['paperSingle2', ASSET_FILES.paperSingle2, () => createPaperFallback(0xd9d0e2)],
-    ['paperPile', ASSET_FILES.paperPile, createPaperPileFallback],
-    ['snack', ASSET_FILES.snack, createSnackFallback],
-    ['strawberry', ASSET_FILES.strawberry, createStrawberryFallback],
-    ['jar', ASSET_FILES.jar, createJarFallback],
-    ['burn', ASSET_FILES.burn, createBurnFallback],
-    ['tumbler', ASSET_FILES.tumbler, createTumblerFallback],
-    ['desk', ASSET_FILES.desk, createDeskFallback],
-  ];
 
-  const loadedEntries = await Promise.all(assetEntries.map(async ([key, filename, fallbackFactory]) => {
-    const template = await loadTemplate(loader, key, filename, fallbackFactory);
-    return [key, template];
-  }));
-
-  loadedEntries.forEach(([key, template]) => {
-    STATE.templates[key] = template;
-  });
+  STATE.templates.note = await loadTemplate(loader, 'note', ASSET_FILES.note, createNoteFallback);
+  STATE.templates.scribble = await loadTemplate(loader, 'scribble', ASSET_FILES.scribble, createScribbleFallback);
+  STATE.templates.clothesFolded = await loadTemplate(loader, 'clothesFolded', ASSET_FILES.clothesFolded, createClothesFoldedFallback);
+  STATE.templates.clothesScattered = await loadTemplate(loader, 'clothesScattered', ASSET_FILES.clothesScattered, createClothesScatteredFallback);
+  STATE.templates.paperSingle = await loadTemplate(loader, 'paperSingle', ASSET_FILES.paperSingle, () => createPaperFallback(0xe5dacb));
+  STATE.templates.paperSingle2 = await loadTemplate(loader, 'paperSingle2', ASSET_FILES.paperSingle2, () => createPaperFallback(0xd9d0e2));
+  STATE.templates.paperPile = await loadTemplate(loader, 'paperPile', ASSET_FILES.paperPile, createPaperPileFallback);
+  STATE.templates.snack = await loadTemplate(loader, 'snack', ASSET_FILES.snack, createSnackFallback);
+  STATE.templates.strawberry = await loadTemplate(loader, 'strawberry', ASSET_FILES.strawberry, createStrawberryFallback);
+  STATE.templates.jar = await loadTemplate(loader, 'jar', ASSET_FILES.jar, createJarFallback);
+  STATE.templates.burn = await loadTemplate(loader, 'burn', ASSET_FILES.burn, createBurnFallback);
+  STATE.templates.tumbler = await loadTemplate(loader, 'tumbler', ASSET_FILES.tumbler, createTumblerFallback);
+  STATE.templates.desk = await loadTemplate(loader, 'desk', ASSET_FILES.desk, createDeskFallback);
 }
 
 async function loadTemplate(loader, key, filename, fallbackFactory) {
@@ -2419,11 +2426,10 @@ function normalizeTemplate(root, key) {
 }
 
 function applyShadowSettings(object) {
-  const shadowsEnabled = !!STATE.renderer?.shadowMap?.enabled;
   object.traverse((child) => {
     if (!child.isMesh) return;
-    child.castShadow = shadowsEnabled;
-    child.receiveShadow = shadowsEnabled;
+    child.castShadow = true;
+    child.receiveShadow = true;
     if (child.material && !Array.isArray(child.material) && 'envMapIntensity' in child.material) {
       child.material.envMapIntensity = 1.1;
       if (child.material.roughness !== undefined) {
@@ -2930,7 +2936,7 @@ function buildDeskAndDecor() {
   STATE.room.deskMeshes = getDeskMeshes();
   STATE.room.deskBounds = box.clone();
 
-  const analyzedSurface = IS_MOBILE_LAYOUT ? null : analyzeDeskSurface();
+  const analyzedSurface = analyzeDeskSurface();
   if (analyzedSurface) {
     STATE.room.deskTopY = analyzedSurface.y;
     STATE.room.deskCenter.set(
@@ -2952,7 +2958,7 @@ function buildDeskAndDecor() {
     STATE.room.deskSurfaceYTolerance = Math.max(0.08, fallbackSize.y * 0.08);
   }
 
-  const analyzedChairSurface = IS_MOBILE_LAYOUT ? null : analyzeChairSeatSurface();
+  const analyzedChairSurface = analyzeChairSeatSurface();
   if (analyzedChairSurface) {
     STATE.room.chairSeatY = analyzedChairSurface.y;
     STATE.room.chairSurfaceBounds = analyzedChairSurface.bounds;
@@ -3489,43 +3495,11 @@ function buildActiveLayoutKeys({ records, clutterFresh, clutterOld, routines, sn
   return keys;
 }
 
-function getRenderableActiveMemos(activeMemos) {
-  if (!IS_MOBILE_LAYOUT || activeMemos.length <= MOBILE_RENDER_DUMMY_THRESHOLD) {
-    return activeMemos;
-  }
-
-  const realMemos = [];
-  const dummyBuckets = Object.create(null);
-
-  activeMemos.forEach((memo) => {
-    if (!isDummyMemo(memo)) {
-      realMemos.push(memo);
-      return;
-    }
-
-    if (!dummyBuckets[memo.category]) dummyBuckets[memo.category] = [];
-    dummyBuckets[memo.category].push(memo);
-  });
-
-  const limitedDummyMemos = [];
-  Object.entries(dummyBuckets).forEach(([category, memoList]) => {
-    const limit = MOBILE_MAX_RENDERED_DUMMY_VISUALS[category] ?? 6;
-    memoList
-      .slice()
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .slice(0, limit)
-      .forEach((memo) => limitedDummyMemos.push(memo));
-  });
-
-  return [...realMemos, ...limitedDummyMemos]
-    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-}
-
 function rebuildVisuals(animateMemoId = null) {
   snapshotLiveVisualTransformsToLayoutCache();
   disposeVisuals();
 
-  const activeMemos = getRenderableActiveMemos(STATE.memos.filter((memo) => !memo.clearedAt));
+  const activeMemos = STATE.memos.filter((memo) => !memo.clearedAt);
   const now = Date.now();
 
   const clutterFresh = [];
@@ -4269,12 +4243,10 @@ function updateAssetDropVisual(visual, now) {
 
   visual.object.position.y = THREE.MathUtils.lerp(intro.fromY, intro.toY, eased) - overshoot;
   visual.object.updateMatrixWorld(true);
-  visual.proxyDirty = true;
 
   if (progress >= 1) {
     visual.object.position.y = intro.toY;
     visual.object.updateMatrixWorld(true);
-    visual.proxyDirty = true;
     visual.dropIntro = null;
   }
 
@@ -5216,26 +5188,37 @@ function createAndAttachEmotionVisual(memo, animateMemoId = null) {
   });
 
   updateCounts();
+  refreshAllVisualPhysics();
   STATE.lastVisualSignature = buildVisualSignature();
   return true;
 }
 
 function createAndAttachVisualForMemo(memo, animateMemoId = null) {
   if (!memo || memo.clearedAt) return false;
+  let handled = false;
   switch (memo.category) {
     case 'record':
-      return createAndAttachRecordVisual(memo, animateMemoId);
+      handled = createAndAttachRecordVisual(memo, animateMemoId);
+      break;
     case 'clutter':
-      return createAndAttachClutterVisual(memo, animateMemoId);
+      handled = createAndAttachClutterVisual(memo, animateMemoId);
+      break;
     case 'routine':
-      return createAndAttachRoutineVisual(memo, animateMemoId);
+      handled = createAndAttachRoutineVisual(memo, animateMemoId);
+      break;
     case 'snack':
-      return createAndAttachSnackVisual(memo, animateMemoId);
+      handled = createAndAttachSnackVisual(memo, animateMemoId);
+      break;
     case 'emotion':
-      return createAndAttachEmotionVisual(memo, animateMemoId);
+      handled = createAndAttachEmotionVisual(memo, animateMemoId);
+      break;
     default:
-      return false;
+      handled = false;
+      break;
   }
+
+  if (handled) refreshAllVisualPhysics();
+  return handled;
 }
 
 function findVisualForMemoId(memoId) {
@@ -5302,6 +5285,7 @@ function removeMemoVisualIncrementally(memo) {
   removeLayoutCacheForMemo(memo);
   removeVisualsForMemoId(memo.id);
   updateCounts();
+  refreshAllVisualPhysics();
   STATE.lastVisualSignature = buildVisualSignature();
   return true;
 }
@@ -5506,14 +5490,10 @@ function startLoop() {
     });
 
     STATE.visuals.forEach((visual) => {
-      if (visual.kind !== 'asset' || !visual.object) return;
+      if (visual.kind !== 'asset' || !visual.hoverProxy || !visual.object) return;
+      syncHoverProxyBounds(visual.hoverProxy, visual.object);
       /* Auto-init physics for newly created visuals */
       if (!visual.phys) initVisualPhysics(visual);
-      if (!visual.hoverProxy) return;
-      if (visual.dropIntro || visual.proxyDirty || visual === STATE.grabbedVisual || !visual.phys) {
-        syncHoverProxyBounds(visual.hoverProxy, visual.object);
-        visual.proxyDirty = false;
-      }
     });
 
     if (STATE.pendingVisualRebuild) {
@@ -5579,13 +5559,11 @@ function onResize() {
   if (!STATE.camera || !STATE.renderer) return;
   const width = UI.sceneRoot.clientWidth || window.innerWidth;
   const height = UI.sceneRoot.clientHeight || window.innerHeight;
-  const isMobile = IS_MOBILE_LAYOUT || width < 768;
+  const isMobile = width < 768;
   STATE.camera.fov = isMobile ? 54 : 43;
   STATE.camera.aspect = width / height;
   STATE.camera.updateProjectionMatrix();
-  STATE.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? MOBILE_MAX_PIXEL_RATIO : DESKTOP_MAX_PIXEL_RATIO));
   STATE.renderer.setSize(width, height);
-  STATE.physicsEnabled = isMobile;
   if (isMobile) {
     STATE.camera.position.set(-0.2, 7.6, 14.5);
   }
@@ -5593,6 +5571,7 @@ function onResize() {
 
 function onPointerMove(event) {
   if (!STATE.renderer) return;
+  if (isMobileTiltTarget()) return;
   const rect = STATE.renderer.domElement.getBoundingClientRect();
   STATE.pointer.x = ((((event.clientX - rect.left) / rect.width) * 2) - 1) * 0.9;
   STATE.pointer.y = ((-((event.clientY - rect.top) / rect.height) * 2) + 1) * 0.9;
@@ -5674,12 +5653,10 @@ function sanitizeStoredMemo(item) {
   };
 }
 
-function serializeLayoutCache(options = {}) {
+function serializeLayoutCache() {
   const next = {};
-  const includeDummyEntries = options.includeDummyEntries === true;
 
   Object.entries(STATE.layoutCache || {}).forEach(([key, entry]) => {
-    if (!includeDummyEntries && typeof key === 'string' && key.includes('dummy-')) return;
     if (!entry) return;
     if (!Number.isFinite(entry.x) || !Number.isFinite(entry.z)) return;
 
@@ -5818,7 +5795,6 @@ function hydrateLayoutCache(rawLayoutCache) {
   if (!rawLayoutCache || typeof rawLayoutCache !== 'object') return next;
 
   Object.entries(rawLayoutCache).forEach(([key, entry]) => {
-    if (typeof key === 'string' && key.includes('dummy-')) return;
     if (!entry || !Number.isFinite(entry.x) || !Number.isFinite(entry.z)) return;
 
     const hydratedEntry = {
@@ -5908,8 +5884,7 @@ async function loadStorage() {
     if (Array.isArray(parsed)) {
       STATE.memos = parsed
         .map((item) => sanitizeStoredMemo(item))
-        .filter(Boolean)
-        .filter((memo) => !isDummyMemo(memo));
+        .filter(Boolean);
       STATE.layoutCache = Object.create(null);
       return;
     }
@@ -5917,8 +5892,7 @@ async function loadStorage() {
     const memoList = Array.isArray(parsed?.memos) ? parsed.memos : [];
     STATE.memos = memoList
       .map((item) => sanitizeStoredMemo(item))
-      .filter(Boolean)
-      .filter((memo) => !isDummyMemo(memo));
+      .filter(Boolean);
     STATE.layoutCache = hydrateLayoutCache(parsed?.layoutCache);
   } catch (error) {
     console.warn('Failed to load storage.', error);
@@ -5990,47 +5964,50 @@ function importMemosJSON() {
 
 /* ═══ Device Orientation (Tilt) ═══ */
 function setupDeviceOrientation() {
-  if (!IS_MOBILE_LAYOUT) {
-    STATE.motionPermissionState = 'unsupported';
-    STATE.physicsEnabled = false;
+  if (!isMobileTiltTarget()) {
+    STATE.useDeviceOrientation = false;
+    STATE.hasOrientationPermission = false;
+    resetTiltState();
     return;
   }
 
-  STATE.physicsEnabled = true;
-
-  if (typeof DeviceOrientationEvent === 'undefined') {
-    STATE.motionPermissionState = 'unsupported';
+  if (!window.DeviceOrientationEvent) {
+    STATE.useDeviceOrientation = false;
+    STATE.hasOrientationPermission = false;
+    resetTiltState();
     return;
   }
 
-  if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-    STATE.motionPermissionState = 'prompt';
-    return;
+  if (typeof DeviceOrientationEvent.requestPermission !== 'function') {
+    STATE.hasOrientationPermission = true;
+    STATE.useDeviceOrientation = true;
+    startDeviceOrientationListener();
   }
-
-  STATE.motionPermissionState = 'granted';
-  attachDeviceOrientationListener();
 }
 
 function updateTiltSmoothing() {
-  if (!STATE.tilt.active) return;
-  /* Normalize beta(front-back) → Z force, gamma(left-right) → X force */
-  /* Use symmetric gamma mapping for balanced left-right movement */
-  const rawGamma = STATE.tilt.rawGamma;
-  const targetX = clamp(rawGamma / 30, -1, 1) * PHYSICS_TILT_FORCE;
-  const targetZ = clamp((STATE.tilt.rawBeta - 45) / 30, -1, 1) * PHYSICS_TILT_FORCE;
+  if (!STATE.useDeviceOrientation || !isMobileTiltTarget()) {
+    STATE.tilt.x += (0 - STATE.tilt.x) * 0.18;
+    STATE.tilt.z += (0 - STATE.tilt.z) * 0.18;
+    return;
+  }
+
+  const idleFor = Date.now() - (STATE.tilt.lastEventAt || 0);
+  if (!STATE.tilt.active || idleFor > ORIENTATION_IDLE_DECAY_MS) {
+    STATE.tilt.x += (0 - STATE.tilt.x) * 0.16;
+    STATE.tilt.z += (0 - STATE.tilt.z) * 0.16;
+    if (Math.abs(STATE.tilt.x) < 0.0001) STATE.tilt.x = 0;
+    if (Math.abs(STATE.tilt.z) < 0.0001) STATE.tilt.z = 0;
+    return;
+  }
+
+  const targetX = clamp(STATE.tilt.rawGamma / ORIENTATION_INPUT_RANGE_DEG, -1, 1) * PHYSICS_TILT_FORCE;
+  const targetZ = clamp((-STATE.tilt.rawBeta) / ORIENTATION_INPUT_RANGE_DEG, -1, 1) * PHYSICS_TILT_FORCE;
   STATE.tilt.x += (targetX - STATE.tilt.x) * PHYSICS_TILT_SMOOTHING;
   STATE.tilt.z += (targetZ - STATE.tilt.z) * PHYSICS_TILT_SMOOTHING;
 }
 
 /* ═══ Physics System ═══ */
-function isRecentPhysicsLockedMemo(memo) {
-  if (!memo?.createdAt) return false;
-  const ageMs = Date.now() - new Date(memo.createdAt).getTime();
-  const ageHours = ageMs / (1000 * 60 * 60);
-  return ageHours < PHYSICS_AGE_RECENT_HOURS;
-}
-
 function getPhysicsFriction(memo) {
   if (!memo) return PHYSICS_FRICTION_MID;
   const ageMs = Date.now() - new Date(memo.createdAt).getTime();
@@ -6056,6 +6033,13 @@ function initVisualPhysics(visual) {
   };
 }
 
+function refreshAllVisualPhysics() {
+  STATE.visuals.forEach((visual) => {
+    if (visual.kind !== 'asset' || !visual.object) return;
+    initVisualPhysics(visual);
+  });
+}
+
 function updatePhysics(delta) {
   if (!STATE.physicsEnabled) return;
   updateTiltSmoothing();
@@ -6064,68 +6048,12 @@ function updatePhysics(delta) {
   const forceZ = STATE.tilt.z;
   const hasForce = Math.abs(forceX) > 0.0003 || Math.abs(forceZ) > 0.0003;
 
-  let hasUnsettledVisuals = false;
-  const activeVisuals = [];
-
-  STATE.visuals.forEach((visual) => {
-    if (visual.kind !== 'asset' || !visual.object || !visual.phys) return;
-    if (visual === STATE.grabbedVisual) return;
-    if (visual.dropIntro) return;
-
-    const memo = visual.memoIds?.length ? STATE.memos.find((m) => m.id === visual.memoIds[0]) : null;
-    if (isRecentPhysicsLockedMemo(memo)) return;
-
-    if (!visual.phys.settled) hasUnsettledVisuals = true;
-    if (hasForce || !visual.phys.settled) activeVisuals.push(visual);
-  });
-
-  if (!hasForce && !hasUnsettledVisuals) return;
-
-  /* Accumulate separation impulses */
-  const sepImpulses = new Map();
-  for (let i = 0; i < activeVisuals.length; i++) {
-    const a = activeVisuals[i];
-    if (!sepImpulses.has(a)) sepImpulses.set(a, { x: 0, z: 0 });
-    for (let j = i + 1; j < activeVisuals.length; j++) {
-      const b = activeVisuals[j];
-      if (!sepImpulses.has(b)) sepImpulses.set(b, { x: 0, z: 0 });
-      const dx = a.object.position.x - b.object.position.x;
-      const dz = a.object.position.z - b.object.position.z;
-      const dist = Math.sqrt(dx * dx + dz * dz);
-      if (dist < PHYSICS_SEPARATION_RADIUS && dist > 0.001) {
-        const overlap = (PHYSICS_SEPARATION_RADIUS - dist) / PHYSICS_SEPARATION_RADIUS;
-        const strength = overlap * overlap * PHYSICS_SEPARATION_FORCE;
-        const nx = dx / dist;
-        const nz = dz / dist;
-        const impA = sepImpulses.get(a);
-        const impB = sepImpulses.get(b);
-        impA.x += nx * strength;
-        impA.z += nz * strength;
-        impB.x -= nx * strength;
-        impB.z -= nz * strength;
-      }
-    }
-  }
-
   STATE.visuals.forEach((visual) => {
     if (visual.kind !== 'asset' || !visual.object || !visual.phys) return;
     if (visual === STATE.grabbedVisual) return;
     if (visual.dropIntro) return;
 
     const p = visual.phys;
-    const memo = visual.memoIds?.length ? STATE.memos.find((m) => m.id === visual.memoIds[0]) : null;
-    p.friction = getPhysicsFriction(memo);
-
-    if (isRecentPhysicsLockedMemo(memo)) {
-      p.vx = 0;
-      p.vz = 0;
-      p.settled = true;
-      visual.object.position.x = p.restX;
-      visual.object.position.z = p.restZ;
-      visual.object.updateMatrixWorld(true);
-      visual.proxyDirty = true;
-      return;
-    }
 
     /* Desk items don't respond to tilt as much */
     const tiltScale = p.onDesk ? 0.15 : 1.0;
@@ -6133,14 +6061,6 @@ function updatePhysics(delta) {
     if (hasForce) {
       p.vx += forceX * (1 - p.friction) * 3.0 * tiltScale;
       p.vz += forceZ * (1 - p.friction) * 3.0 * tiltScale;
-      p.settled = false;
-    }
-
-    /* Apply separation impulse */
-    const sep = sepImpulses.get(visual);
-    if (sep && (Math.abs(sep.x) > 0.0001 || Math.abs(sep.z) > 0.0001)) {
-      p.vx += sep.x;
-      p.vz += sep.z;
       p.settled = false;
     }
 
@@ -6166,11 +6086,9 @@ function updatePhysics(delta) {
         if (returnDist > 0.01) {
           visual.object.position.x += dx * 0.03;
           visual.object.position.z += dz * 0.03;
-          visual.proxyDirty = true;
         } else {
           visual.object.position.x = p.restX;
           visual.object.position.z = p.restZ;
-          visual.proxyDirty = true;
           p.settled = true;
         }
       }
@@ -6182,7 +6100,6 @@ function updatePhysics(delta) {
     /* Apply velocity */
     visual.object.position.x += p.vx;
     visual.object.position.z += p.vz;
-    visual.proxyDirty = true;
 
     /* Room bounds with bounce */
     const b = PHYSICS_ROOM_BOUNDS;
@@ -6251,6 +6168,7 @@ function setupInteraction() {
 
   function onPointerDown(event) {
     if (event.button && event.button !== 0) return;
+    if (isMobileTiltTarget()) event.preventDefault();
     if (!UI.entryPanel.classList.contains('hidden') || !UI.historyPanel.classList.contains('hidden')) return;
 
     const gs = {
@@ -6312,7 +6230,6 @@ function setupInteraction() {
       visual.object.position.z = clamp(floorPos.z, PHYSICS_ROOM_BOUNDS.minZ, PHYSICS_ROOM_BOUNDS.maxZ);
       visual.object.position.y = gs.liftY;
       visual.object.updateMatrixWorld(true);
-      visual.proxyDirty = true;
     }
 
     /* Record velocity history */
@@ -6375,9 +6292,10 @@ function setupInteraction() {
     }
 
     /* Apply throw velocity */
-    visual.phys.vx = clamp(throwVX, -PHYSICS_MAX_VELOCITY, PHYSICS_MAX_VELOCITY);
-    visual.phys.vz = clamp(throwVZ, -PHYSICS_MAX_VELOCITY, PHYSICS_MAX_VELOCITY);
+    visual.phys.vx = clamp(throwVX, -PHYSICS_MAX_VELOCITY, PHYSICS_MAX_VELOCITY) * PHYSICS_THROW_FRICTION;
+    visual.phys.vz = clamp(throwVZ, -PHYSICS_MAX_VELOCITY, PHYSICS_MAX_VELOCITY) * PHYSICS_THROW_FRICTION;
     visual.phys.settled = false;
+    visual.phys.friction = getPhysicsFriction(STATE.memos.find((m) => visual.memoIds?.includes(m.id)) || null);
 
     /* Update rest position to new dropped position */
     visual.phys.restX = visual.object.position.x;
@@ -6387,7 +6305,6 @@ function setupInteraction() {
     const layoutKey = visual.object?.userData?.layoutCacheKey;
     if (layoutKey) {
       syncLayoutCacheFromObject(layoutKey, visual.object, visual.object.userData.layoutCacheExtra || {});
-      visual.proxyDirty = true;
       persistStorage();
     }
 
@@ -6398,6 +6315,13 @@ function setupInteraction() {
     clearTimeout(STATE.longPressTimer);
     if (STATE.grabbedVisual && STATE.grabbedVisual.object && STATE.grabbedVisual.phys) {
       restObjectOnY(STATE.grabbedVisual.object, STATE.grabbedVisual.phys.onDesk ? (STATE.room.deskTopY || 1.28) : 0.02);
+      STATE.grabbedVisual.phys.restX = STATE.grabbedVisual.object.position.x;
+      STATE.grabbedVisual.phys.restZ = STATE.grabbedVisual.object.position.z;
+      const layoutKey = STATE.grabbedVisual.object?.userData?.layoutCacheKey;
+      if (layoutKey) {
+        syncLayoutCacheFromObject(layoutKey, STATE.grabbedVisual.object, STATE.grabbedVisual.object.userData.layoutCacheExtra || {});
+        persistStorage();
+      }
     }
     STATE.grabState = null;
     STATE.grabbedVisual = null;
@@ -6421,7 +6345,7 @@ function setupInteraction() {
 function persistStorage() {
   const payload = {
     version: STORAGE_PAYLOAD_VERSION,
-    memos: STATE.memos.filter((memo) => memo && !isDummyMemo(memo)),
+    memos: STATE.memos,
     layoutCache: serializeLayoutCache(),
   };
 
