@@ -4,33 +4,19 @@ import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 
 const STORAGE_KEY = 'mind-room-memos-v3';
 const STORAGE_PAYLOAD_VERSION = 4;
+const ENABLE_HEAVY_DUMMY_MEMOS = false;
+const DUMMY_MEMO_ID_PREFIX = 'dummy-mixed-20260329-v7-100-old-recent';
+const HEAVY_DUMMY_MEMO_COUNTS = Object.freeze({
+  clutter: 20,
+  routine: 20,
+  record: 20,
+  snack: 20,
+  emotion: 20,
+});
 const NON_DESK_SCALE_MULTIPLIER = 2;
 
-/* ═══ Physics & Interaction Constants ═══ */
-const PHYSICS_FRICTION_RECENT = 0.96;
-const PHYSICS_FRICTION_OLD = 0.78;
-const PHYSICS_FRICTION_MID = 0.88;
-const PHYSICS_AGE_RECENT_HOURS = 72;
-const PHYSICS_AGE_OLD_DAYS = 3;
-const PHYSICS_TILT_FORCE = 0.044;
-const PHYSICS_TILT_SMOOTHING = 0.22;
-const PHYSICS_REST_THRESHOLD = 0.0008;
-const PHYSICS_MAX_VELOCITY = 0.35;
-const PHYSICS_THROW_MULTIPLIER = 0.018;
-const PHYSICS_THROW_FRICTION = 0.92;
-const PHYSICS_BOUNCE_FACTOR = 0.3;
-const PHYSICS_ROOM_BOUNDS = { minX: -8.5, maxX: 8.5, minZ: -5.8, maxZ: 5.4 };
-const PHYSICS_SEPARATION_RADIUS = 1.2;
-const PHYSICS_SEPARATION_FORCE = 0.012;
-const LONG_PRESS_MS = 500;
-const DRAG_DEAD_ZONE = 6;
-const VELOCITY_HISTORY_SIZE = 6;
-const IDB_DB_NAME = 'mind-room-db';
-const IDB_STORE_NAME = 'app-data';
-const IDB_DB_VERSION = 1;
-
-const SILENCE_MS = 1800;
-const SPEECH_FINALIZE_GRACE_MS = 240;
+const SILENCE_MS = 3000;
+const SPEECH_FINALIZE_GRACE_MS = 3000;
 const RESTART_RECOGNITION_DELAY_MS = 35;
 const HYBRID_RECOGNITION_LANG = 'ko-KR';
 const CLUTTER_MERGE_DAYS = 5;
@@ -980,8 +966,201 @@ const UI = {
   closeHistoryBtn: document.getElementById('close-history-btn'),
   historyPanel: document.getElementById('history-panel'),
   historyList: document.getElementById('history-list'),
+  memoDetailPanel: document.getElementById('memo-detail-panel'),
+  memoDetailLabel: document.getElementById('memo-detail-label'),
+  memoDetailText: document.getElementById('memo-detail-text'),
+  memoDetailDate: document.getElementById('memo-detail-date'),
+  memoDetailClear: document.getElementById('memo-detail-clear'),
+  memoDetailDelete: document.getElementById('memo-detail-delete'),
+  closeDetailBtn: document.getElementById('close-detail-btn'),
 };
 
+function buildHeavyDummyMemos(nowMs = Date.now()) {
+  const messages = {
+    clutter: [
+      '해야 할 말이 머릿속에서 계속 겹친다',
+      '지금 생각을 정리하지 않으면 더 산만해질 것 같다',
+      '괜히 다시 확인하고 싶은 장면이 남아 있다',
+      '방금 떠오른 아이디어를 놓치기 싫다',
+      '해야 할 일과 하고 싶은 일이 계속 엉킨다',
+      '기분은 애매한데 손은 계속 바쁘다',
+      '중요하지 않은 생각이 오히려 크게 남는다',
+      '메모하지 않으면 금방 흩어질 생각이다',
+      '자꾸 되새김질하게 되는 한 문장이 남아 있다',
+      '오늘 해야 할 것들이 한꺼번에 떠올랐다',
+    ],
+    routine: [
+      '책상 위를 다시 정리해야 한다',
+      '옷과 가방 위치를 정해두고 싶다',
+      '오늘은 정리 루틴을 지키고 싶다',
+      '자기 전 10분 정리를 루틴으로 만들자',
+      '아침 준비 순서를 다시 단순하게 만들자',
+      '정리한 상태를 오래 유지하고 싶다',
+      '보이는 곳부터 정리하면 마음도 덜 복잡할 것 같다',
+      '작은 정리라도 해두면 내일이 편해질 것 같다',
+      '습관처럼 다시 제자리로 돌려놓자',
+      '쌓이기 전에 조금씩 정리하자',
+    ],
+    record: [
+      '오늘 떠오른 문장을 저장해 둔다',
+      '다음 작업 전에 확인할 포인트를 적는다',
+      '이건 나중에 확장할 아이디어 메모다',
+      '바로 잊을 것 같아서 짧게 남겨둔다',
+      '이 감각은 나중에도 다시 보고 싶다',
+      '지금 화면 구성을 다시 참고할 것 같다',
+      '짧지만 지금 아니면 사라질 생각이다',
+      '나중에 다시 꺼내 볼 단서만 남겨둔다',
+      '오늘 흐름을 기억하려고 한 줄 적는다',
+      '작업하다 떠오른 포인트를 임시 저장한다',
+    ],
+    snack: [
+      '오늘은 끝까지 해보자',
+      '지금 흐름을 끊지 말자',
+      '조금만 더 집중해보자',
+      '중간에 포기하지 말자',
+      '다시 시작해도 된다',
+      '리듬만 유지하자',
+      '완벽하려고 하지 말고 계속 가자',
+      '하던 만큼만 더 밀어보자',
+      '멈추더라도 다시 붙으면 된다',
+      '한 번만 더 집중해서 마무리하자',
+    ],
+    emotion: [
+      '괜히 마음이 올라왔다',
+      '생각보다 덜 힘들었다',
+      '조용한 안정감이 남는다',
+      '순간적으로 서늘해졌다',
+      '기분이 생각보다 괜찮다',
+      '아직도 약간 걸리는 감정이 있다',
+      '한참 지난 감정인데 아직 잔상이 남아 있다',
+      '그때의 안도감이 뒤늦게 다시 떠올랐다',
+      '이제는 옅어졌지만 완전히 끝난 감정은 아니다',
+      '시간이 꽤 지났는데도 문득 다시 올라온다',
+      '별일 아닌데도 감정이 길게 남았다',
+      '갑자기 기분의 결이 바뀌는 순간이 있었다',
+    ],
+  };
+
+  const templates = [];
+  Object.entries(HEAVY_DUMMY_MEMO_COUNTS).forEach(([category, count]) => {
+    for (let index = 0; index < count; index += 1) {
+      templates.push({ category, index });
+    }
+  });
+
+  function getAgeMs(category, index) {
+    if (category === 'clutter') {
+      if (index < 6) return (3 + index * 7) * 60 * 60 * 1000;
+      if (index < 12) return (2 + (index - 6) * 0.45) * 24 * 60 * 60 * 1000;
+      return (32 + (index - 12) * 14) * 24 * 60 * 60 * 1000;
+    }
+
+    if (category === 'routine') {
+      if (index < 6) return (5 + index * 5) * 60 * 60 * 1000;
+      if (index < 12) return (1.25 + (index - 6) * 0.38) * 24 * 60 * 60 * 1000;
+      return (18 + (index - 12) * 9) * 24 * 60 * 60 * 1000;
+    }
+
+    if (category === 'record') {
+      if (index < 7) return (12 + index * 34) * 60 * 1000;
+      if (index < 13) return (1 + (index - 7) * 0.85) * 24 * 60 * 60 * 1000;
+      return (26 + (index - 13) * 19) * 24 * 60 * 60 * 1000;
+    }
+
+    if (category === 'snack') {
+      if (index < 8) return (15 + index * 170) * 60 * 1000;
+      if (index < 14) return (2 + (index - 8) * 0.8) * 24 * 60 * 60 * 1000;
+      return (12 + (index - 14) * 11) * 24 * 60 * 60 * 1000;
+    }
+
+    if (category === 'emotion') {
+      if (index < 7) return (2 + index * 9) * 60 * 60 * 1000;
+      if (index < 13) return (3 + (index - 7) * 0.65) * 24 * 60 * 60 * 1000;
+      return (14 + (index - 13) * 21) * 24 * 60 * 60 * 1000;
+    }
+
+    return (index + 1) * 60 * 60 * 1000;
+  }
+
+  return templates.map(({ category, index }, globalIndex) => {
+    const ageMs = getAgeMs(category, index);
+    const sampleList = messages[category] || ['테스트 메모'];
+    const sample = sampleList[index % sampleList.length];
+    const createdAt = new Date(nowMs - ageMs - globalIndex * 1700).toISOString();
+    const emotionTone = category === 'emotion'
+      ? (index % 3 === 0 || index % 3 === 2 ? 'good' : 'bad')
+      : null;
+
+    return {
+      id: `${DUMMY_MEMO_ID_PREFIX}-${category}-${String(index + 1).padStart(3, '0')}`,
+      category,
+      emotionTone,
+      transcript: `[더미 ${category} ${index + 1}] ${sample}`,
+      createdAt,
+      clearedAt: null,
+    };
+  });
+}
+
+function ensureHeavyDummyMemos() {
+  const previousCount = STATE.memos.length;
+  const previousDummyKeys = new Set(
+    STATE.memos
+      .filter((memo) => typeof memo?.id === 'string' && memo.id.startsWith('dummy-'))
+      .map((memo) => memo.id)
+  );
+
+  if (!ENABLE_HEAVY_DUMMY_MEMOS) {
+    const nonDummyMemos = STATE.memos.filter(
+      (memo) => !(typeof memo?.id === 'string' && memo.id.startsWith('dummy-'))
+    );
+    if (nonDummyMemos.length === STATE.memos.length) return 0;
+
+    STATE.memos = nonDummyMemos;
+
+    const nextLayoutCache = Object.create(null);
+    Object.entries(STATE.layoutCache || {}).forEach(([key, entry]) => {
+      if (typeof key === 'string' && (key.includes('dummy-') || key === 'clutter-old:shared')) return;
+      nextLayoutCache[key] = entry;
+    });
+    STATE.layoutCache = nextLayoutCache;
+
+    return Math.abs(previousCount - STATE.memos.length) || 1;
+  }
+
+  const desiredDummyMemos = buildHeavyDummyMemos();
+  const desiredIds = new Set(desiredDummyMemos.map((memo) => memo.id));
+
+  const nonDummyMemos = STATE.memos.filter(
+    (memo) => !(typeof memo?.id === 'string' && memo.id.startsWith('dummy-'))
+  );
+  STATE.memos = [...nonDummyMemos, ...desiredDummyMemos]
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+  let changed = STATE.memos.length !== previousCount;
+  if (!changed) {
+    if (previousDummyKeys.size !== desiredIds.size) changed = true;
+    else {
+      for (const id of previousDummyKeys) {
+        if (!desiredIds.has(id)) {
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+
+  if (!changed) return 0;
+
+  const nextLayoutCache = Object.create(null);
+  Object.entries(STATE.layoutCache || {}).forEach(([key, entry]) => {
+    if (typeof key === 'string' && (key.includes('dummy-') || key === 'clutter-old:shared')) return;
+    nextLayoutCache[key] = entry;
+  });
+  STATE.layoutCache = nextLayoutCache;
+
+  return Math.abs(STATE.memos.length - previousCount) || 1;
+}
 
 const STATE = {
   memos: [],
@@ -1008,6 +1187,7 @@ const STATE = {
   hoveredRoot: null,
   hoverDebounceTimer: null,
   hoverDebouncePendingRoot: null,
+  detailMemoIds: null,
   mixers: [],
   templates: {},
   visuals: [],
@@ -1029,16 +1209,10 @@ const STATE = {
   pendingVisualRebuild: false,
   appReady: false,
   loadingOverlay: null,
+  hasOrientationPermission: false,
+  useDeviceOrientation: false,
   playedEmotionRewardDropMemoIds: new Set(),
   layoutCache: Object.create(null),
-  /* physics & interaction */
-  tilt: { x: 0, z: 0, rawBeta: 0, rawGamma: 0, active: false },
-  grabbedVisual: null,
-  grabState: null, /* { startTime, startX, startY, pointerId, isDragging, velocityHistory, lastX, lastY, lastTime, liftY } */
-  longPressTimer: null,
-  physicsEnabled: true,
-  idbReady: false,
-  idbDatabase: null,
   easter: {
     overlayRoot: null,
     deleteStreakCount: 0,
@@ -1079,7 +1253,7 @@ const EASTER_ASSET_PATHS = Object.freeze({
 const EASTER_DELETE_STREAK_WINDOW_MS = 4200;
 const EASTER_DELETE_STREAK_TRIGGER = 10;
 const EASTER_CREATION_DELAY_MS = 2000;
-const EASTER_SNACK_BATCH_SIZE = 5;
+const EASTER_TUMBLER_BATCH_SIZE = 5;
 const EASTER_EMOTION_BATCH_SIZE = 10;
 const EASTER_ROUTINE_BATCH_SIZE = 10;
 const EASTER_ULTRA_RARE_CHANCE = 0.0025;
@@ -1088,24 +1262,6 @@ const EASTER_RA4_COOLDOWN_MS = 12 * 60 * 1000;
 
 function isDummyMemo(memo) {
   return typeof memo?.id === 'string' && memo.id.startsWith('dummy-');
-}
-
-function cleanupLegacyDummyMemos() {
-  const previousCount = STATE.memos.length;
-  const filteredMemos = STATE.memos.filter((memo) => !isDummyMemo(memo));
-
-  if (filteredMemos.length === previousCount) return 0;
-
-  STATE.memos = filteredMemos;
-
-  const nextLayoutCache = Object.create(null);
-  Object.entries(STATE.layoutCache || {}).forEach(([key, entry]) => {
-    if (typeof key === 'string' && (key.includes('dummy-') || key === 'clutter-old:shared')) return;
-    nextLayoutCache[key] = entry;
-  });
-  STATE.layoutCache = nextLayoutCache;
-
-  return previousCount - filteredMemos.length;
 }
 
 function loadEasterState() {
@@ -1207,12 +1363,12 @@ function showEasterRa2() {
   const img = createEasterImage('ra2', { width: 'min(36vw, 320px)', maxWidth: '48vw', maxHeight: '48vh' });
   animateAndRemove(img, [
     { opacity: 0, transform: 'translate(-50%, -50%) scale(0.18)' },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(0.32)', offset: 0.18 },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(0.88)', offset: 0.5 },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(2.2)', offset: 0.72 },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(5.4)', offset: 0.86 },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(12.8)' },
-  ], { duration: 2060, easing: 'cubic-bezier(0.1, 0.66, 0.16, 1)', fill: 'forwards' });
+    { opacity: 1, transform: 'translate(-50%, -50%) scale(0.32)', offset: 0.16 },
+    { opacity: 1, transform: 'translate(-50%, -50%) scale(0.92)', offset: 0.42 },
+    { opacity: 1, transform: 'translate(-50%, -50%) scale(1.8)', offset: 0.68 },
+    { opacity: 0.96, transform: 'translate(-50%, -50%) scale(2.6)', offset: 0.84 },
+    { opacity: 0, transform: 'translate(-50%, -50%) scale(3.4)' },
+  ], { duration: 1880, easing: 'cubic-bezier(0.14, 0.7, 0.2, 1)', fill: 'forwards' });
 }
 
 function showEasterRa3() {
@@ -1313,17 +1469,17 @@ function maybeTriggerCreationEasters(memo) {
   if (!memo || isDummyMemo(memo)) return;
 
   if (memo.category === 'snack') {
-    const snackCount = getRealMemoCountByCategory('snack');
-    const previousSnackCount = Math.max(0, snackCount - 1);
-    const crossedSnackBatch = Math.floor(snackCount / EASTER_SNACK_BATCH_SIZE)
-      > Math.floor(previousSnackCount / EASTER_SNACK_BATCH_SIZE);
+    const tumblerCount = getRealMemoCountByCategory('snack');
+    const previousTumblerCount = Math.max(0, tumblerCount - 1);
+    const crossedTumblerBatch = Math.floor(tumblerCount / EASTER_TUMBLER_BATCH_SIZE)
+      > Math.floor(previousTumblerCount / EASTER_TUMBLER_BATCH_SIZE);
 
-    if (crossedSnackBatch) {
+    if (crossedTumblerBatch) {
       scheduleCreationEaster(
-        snackCount,
+        tumblerCount,
         (requiredCount) => getRealMemoCountByCategory('snack') >= requiredCount,
         () => {
-          console.info(`[easter] ra1 triggered at snack count ${snackCount}`);
+          console.info(`[easter] ra1 triggered at tumbler count ${tumblerCount}`);
           showEasterRa1();
         },
       );
@@ -1449,11 +1605,19 @@ function setupButtonSoundUI() {
     && button.getAttribute('aria-disabled') !== 'true'
   );
 
+  const shouldPlaySound = (button) => {
+    // Don't play click sounds during active recording
+    if (STATE.isListening || STATE.keepRecognitionAlive) return false;
+    // Don't play for the record button itself (mic interaction clash)
+    if (button && button.id === 'record-btn') return false;
+    return true;
+  };
+
   document.addEventListener('pointerdown', (event) => {
     const button = event.target instanceof Element ? event.target.closest(BUTTON_SOUND_SELECTOR) : null;
     if (!isValidButtonTarget(button)) return;
     markButtonPress(button);
-    playButtonClickSound();
+    if (shouldPlaySound(button)) playButtonClickSound();
   }, true);
 
   document.addEventListener('keydown', (event) => {
@@ -1461,7 +1625,7 @@ function setupButtonSoundUI() {
     const button = event.target instanceof Element ? event.target.closest(BUTTON_SOUND_SELECTOR) : null;
     if (!isValidButtonTarget(button)) return;
     markButtonPress(button);
-    playButtonClickSound();
+    if (shouldPlaySound(button)) playButtonClickSound();
   }, true);
 
   ['pointerup', 'pointercancel', 'dragend', 'keyup', 'blur'].forEach((eventName) => {
@@ -1475,13 +1639,12 @@ function setupButtonSoundUI() {
 init();
 
 async function init() {
-  await openIDB();
-  await loadStorage();
+  loadStorage();
   loadEasterState();
   setupButtonSoundUI();
   ensureEasterOverlayRoot();
-  const removedLegacyDummyMemoCount = cleanupLegacyDummyMemos();
-  if (removedLegacyDummyMemoCount > 0) persistStorage();
+  const addedDummyMemoCount = ensureHeavyDummyMemos();
+  if (addedDummyMemoCount > 0) persistStorage();
   seedPlayedEmotionRewardDropsFromExistingMemos();
   setupUI();
   renderCategoryChips();
@@ -1491,8 +1654,6 @@ async function init() {
   buildDeskAndDecor();
   rebuildVisuals();
   renderHistory();
-  setupDeviceOrientation();
-  setupInteraction();
   maybeTriggerReloadRa3();
   startLoop();
   STATE.appReady = true;
@@ -1503,6 +1664,7 @@ function setupUI() {
   UI.allowMic.addEventListener('click', async () => {
     const ok = await requestMicrophonePermission();
     if (!ok) return;
+    await requestOrientationPermission();
     UI.permissionModal.classList.remove('visible');
     ensureRecognition();
 
@@ -1562,6 +1724,11 @@ function setupUI() {
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
 
+    if (STATE.detailMemoIds) {
+      closeDetailPanel();
+      return;
+    }
+
     if (!UI.historyPanel.classList.contains('hidden')) {
       closeHistoryPanel();
       hideMemoHover();
@@ -1579,6 +1746,24 @@ function setupUI() {
   window.addEventListener('pointermove', onPointerMove);
   window.addEventListener('pointerleave', hideMemoHover);
   UI.sceneRoot.addEventListener('pointerleave', hideMemoHover);
+
+  UI.sceneRoot.addEventListener('pointerdown', onScenePointerDown);
+
+  if (UI.closeDetailBtn) {
+    UI.closeDetailBtn.addEventListener('click', () => { closeDetailPanel(); });
+  }
+  if (UI.memoDetailClear) {
+    UI.memoDetailClear.addEventListener('click', () => {
+      if (!STATE.detailMemoIds || !STATE.detailMemoIds.length) return;
+      STATE.detailMemoIds.forEach((id) => clearMemo(id));
+      closeDetailPanel();
+    });
+  }
+  if (UI.memoDetailDelete) {
+    UI.memoDetailDelete.hidden = true;
+    UI.memoDetailDelete.disabled = true;
+    UI.memoDetailDelete.setAttribute('aria-hidden', 'true');
+  }
 }
 
 function openEntryPanel() {
@@ -1774,6 +1959,64 @@ async function requestMicrophonePermission() {
     UI.selectionCopy.textContent = '';
     return false;
   }
+}
+
+async function requestOrientationPermission() {
+  if (STATE.hasOrientationPermission) return true;
+
+  // iOS 13+ Safari requires explicit permission request
+  if (typeof DeviceOrientationEvent !== 'undefined'
+    && typeof DeviceOrientationEvent.requestPermission === 'function') {
+    try {
+      const result = await DeviceOrientationEvent.requestPermission();
+      if (result === 'granted') {
+        STATE.hasOrientationPermission = true;
+        STATE.useDeviceOrientation = true;
+        startDeviceOrientationListener();
+        return true;
+      }
+      console.warn('Device orientation permission denied');
+      return false;
+    } catch (error) {
+      console.warn('Device orientation permission error:', error);
+      return false;
+    }
+  }
+
+  // Android / non-Safari: no permission needed, just listen
+  if (window.DeviceOrientationEvent) {
+    STATE.hasOrientationPermission = true;
+    STATE.useDeviceOrientation = true;
+    startDeviceOrientationListener();
+    return true;
+  }
+
+  return false;
+}
+
+function startDeviceOrientationListener() {
+  let initialBeta = null;
+  let initialGamma = null;
+
+  window.addEventListener('deviceorientation', (event) => {
+    if (!STATE.useDeviceOrientation) return;
+    if (event.beta === null || event.gamma === null) return;
+
+    // Capture rest position on first valid reading
+    if (initialBeta === null) {
+      initialBeta = event.beta;
+      initialGamma = event.gamma;
+    }
+
+    // gamma: left/right tilt (-90..90), beta: front/back tilt (-180..180)
+    const deltaGamma = event.gamma - initialGamma;
+    const deltaBeta = event.beta - initialBeta;
+
+    // Map tilt to pointer range (-1..1) with a comfortable 20-degree range
+    const tiltRange = 20;
+    STATE.pointer.x = Math.max(-1, Math.min(1, deltaGamma / tiltRange));
+    STATE.pointer.y = Math.max(-1, Math.min(1, -deltaBeta / tiltRange));
+  }, { passive: true });
 }
 
 function ensureRecognition() {
@@ -1996,11 +2239,11 @@ function setupScene() {
   STATE.scene.background = new THREE.Color(roomColor);
   STATE.scene.fog = new THREE.FogExp2(roomColor, 0.0018);
 
-  const fov = isMobile ? 54 : 43;
+  const fov = isMobile ? 58 : 43;
   STATE.camera = new THREE.PerspectiveCamera(fov, width / height, 0.1, 100);
   if (isMobile) {
-    STATE.camera.position.set(-0.2, 7.6, 14.5);
-    STATE.camera.lookAt(-0.2, 0.6, -2.2);
+    STATE.camera.position.set(-0.2, 6.8, 12.5);
+    STATE.camera.lookAt(-0.2, 0.8, -2.2);
   } else {
     STATE.camera.position.set(-0.55, 5.1, 11.6);
     STATE.camera.lookAt(-0.55, 1.35, -2.35);
@@ -2096,19 +2339,29 @@ function buildRoomShell() {
 async function loadAssets() {
   const loader = new GLTFLoader();
 
-  STATE.templates.note = await loadTemplate(loader, 'note', ASSET_FILES.note, createNoteFallback);
-  STATE.templates.scribble = await loadTemplate(loader, 'scribble', ASSET_FILES.scribble, createScribbleFallback);
-  STATE.templates.clothesFolded = await loadTemplate(loader, 'clothesFolded', ASSET_FILES.clothesFolded, createClothesFoldedFallback);
-  STATE.templates.clothesScattered = await loadTemplate(loader, 'clothesScattered', ASSET_FILES.clothesScattered, createClothesScatteredFallback);
-  STATE.templates.paperSingle = await loadTemplate(loader, 'paperSingle', ASSET_FILES.paperSingle, () => createPaperFallback(0xe5dacb));
-  STATE.templates.paperSingle2 = await loadTemplate(loader, 'paperSingle2', ASSET_FILES.paperSingle2, () => createPaperFallback(0xd9d0e2));
-  STATE.templates.paperPile = await loadTemplate(loader, 'paperPile', ASSET_FILES.paperPile, createPaperPileFallback);
-  STATE.templates.snack = await loadTemplate(loader, 'snack', ASSET_FILES.snack, createSnackFallback);
-  STATE.templates.strawberry = await loadTemplate(loader, 'strawberry', ASSET_FILES.strawberry, createStrawberryFallback);
-  STATE.templates.jar = await loadTemplate(loader, 'jar', ASSET_FILES.jar, createJarFallback);
-  STATE.templates.burn = await loadTemplate(loader, 'burn', ASSET_FILES.burn, createBurnFallback);
-  STATE.templates.tumbler = await loadTemplate(loader, 'tumbler', ASSET_FILES.tumbler, createTumblerFallback);
-  STATE.templates.desk = await loadTemplate(loader, 'desk', ASSET_FILES.desk, createDeskFallback);
+  const entries = [
+    ['note', ASSET_FILES.note, createNoteFallback],
+    ['scribble', ASSET_FILES.scribble, createScribbleFallback],
+    ['clothesFolded', ASSET_FILES.clothesFolded, createClothesFoldedFallback],
+    ['clothesScattered', ASSET_FILES.clothesScattered, createClothesScatteredFallback],
+    ['paperSingle', ASSET_FILES.paperSingle, () => createPaperFallback(0xe5dacb)],
+    ['paperSingle2', ASSET_FILES.paperSingle2, () => createPaperFallback(0xd9d0e2)],
+    ['paperPile', ASSET_FILES.paperPile, createPaperPileFallback],
+    ['snack', ASSET_FILES.snack, createSnackFallback],
+    ['strawberry', ASSET_FILES.strawberry, createStrawberryFallback],
+    ['jar', ASSET_FILES.jar, createJarFallback],
+    ['burn', ASSET_FILES.burn, createBurnFallback],
+    ['tumbler', ASSET_FILES.tumbler, createTumblerFallback],
+    ['desk', ASSET_FILES.desk, createDeskFallback],
+  ];
+
+  const results = await Promise.all(
+    entries.map(([key, file, fallback]) => loadTemplate(loader, key, file, fallback))
+  );
+
+  results.forEach((template) => {
+    STATE.templates[template.key] = template;
+  });
 }
 
 async function loadTemplate(loader, key, filename, fallbackFactory) {
@@ -5066,17 +5319,6 @@ function renderHistory() {
     button.addEventListener('click', () => deleteMemo(button.dataset.deleteId));
   });
 
-  /* Export / Import buttons */
-  const backupWrap = document.createElement('div');
-  backupWrap.className = 'backup-actions';
-  backupWrap.innerHTML = `
-    <button type="button" class="log-btn backup-btn" id="export-btn">내보내기</button>
-    <button type="button" class="log-btn backup-btn" id="import-btn">가져오기</button>
-  `;
-  UI.historyList.appendChild(backupWrap);
-  document.getElementById('export-btn')?.addEventListener('click', exportMemosJSON);
-  document.getElementById('import-btn')?.addEventListener('click', importMemosJSON);
-
   updateCounts();
 }
 
@@ -5188,7 +5430,6 @@ function startLoop() {
 
     STATE.mixers.forEach((mixer) => mixer.update(delta));
     updateCamera(delta);
-    updatePhysics(delta);
 
     STATE.visuals = STATE.visuals.filter((visual) => {
       if (visual.kind === 'particles') {
@@ -5205,8 +5446,6 @@ function startLoop() {
     STATE.visuals.forEach((visual) => {
       if (visual.kind !== 'asset' || !visual.hoverProxy || !visual.object) return;
       syncHoverProxyBounds(visual.hoverProxy, visual.object);
-      /* Auto-init physics for newly created visuals */
-      if (!visual.phys) initVisualPhysics(visual);
     });
 
     if (STATE.pendingVisualRebuild) {
@@ -5255,10 +5494,10 @@ function updateCamera(delta) {
   const isMobile = (window.innerWidth || 768) < 768;
   if (isMobile) {
     const baseX = -0.2;
-    const baseY = 7.6;
-    STATE.camera.position.x = THREE.MathUtils.lerp(STATE.camera.position.x, baseX + STATE.pointer.x * 0.1, delta * 1.2);
-    STATE.camera.position.y = THREE.MathUtils.lerp(STATE.camera.position.y, baseY + STATE.pointer.y * 0.05, delta * 1.2);
-    STATE.camera.lookAt(-0.2, 0.6, -2.2);
+    const baseY = 6.8;
+    STATE.camera.position.x = THREE.MathUtils.lerp(STATE.camera.position.x, baseX + STATE.pointer.x * 0.35, delta * 1.2);
+    STATE.camera.position.y = THREE.MathUtils.lerp(STATE.camera.position.y, baseY + STATE.pointer.y * 0.18, delta * 1.2);
+    STATE.camera.lookAt(-0.2, 0.8, -2.2);
   } else {
     const targetX = -0.55 + STATE.pointer.x * 0.22;
     const targetY = 5.1 + STATE.pointer.y * 0.12;
@@ -5273,17 +5512,19 @@ function onResize() {
   const width = UI.sceneRoot.clientWidth || window.innerWidth;
   const height = UI.sceneRoot.clientHeight || window.innerHeight;
   const isMobile = width < 768;
-  STATE.camera.fov = isMobile ? 54 : 43;
+  STATE.camera.fov = isMobile ? 58 : 43;
   STATE.camera.aspect = width / height;
   STATE.camera.updateProjectionMatrix();
   STATE.renderer.setSize(width, height);
   if (isMobile) {
-    STATE.camera.position.set(-0.2, 7.6, 14.5);
+    STATE.camera.position.set(-0.2, 6.8, 12.5);
   }
 }
 
 function onPointerMove(event) {
   if (!STATE.renderer) return;
+  // When device tilt is active, don't let pointer events override the tilt-driven values
+  if (STATE.useDeviceOrientation) return;
   const rect = STATE.renderer.domElement.getBoundingClientRect();
   STATE.pointer.x = ((((event.clientX - rect.left) / rect.width) * 2) - 1) * 0.9;
   STATE.pointer.y = ((-((event.clientY - rect.top) / rect.height) * 2) + 1) * 0.9;
@@ -5291,8 +5532,79 @@ function onPointerMove(event) {
   STATE.pointerClient.y = event.clientY;
 }
 
+function onScenePointerDown(event) {
+  if (!STATE.camera || !STATE.renderer) return;
+  if (STATE.detailMemoIds) { closeDetailPanel(); return; }
+  if (!UI.entryPanel.classList.contains('hidden') || !UI.historyPanel.classList.contains('hidden')) return;
+
+  const rect = STATE.renderer.domElement.getBoundingClientRect();
+  const px = (((event.clientX - rect.left) / rect.width) * 2) - 1;
+  const py = -(((event.clientY - rect.top) / rect.height) * 2) + 1;
+  const clickPointer = new THREE.Vector2(px, py);
+
+  const clickRaycaster = new THREE.Raycaster();
+  clickRaycaster.setFromCamera(clickPointer, STATE.camera);
+
+  const interactiveRoots = [];
+  STATE.visuals.forEach((visual) => {
+    if (visual.kind !== 'asset') return;
+    if (visual.hoverProxy) interactiveRoots.push(visual.hoverProxy);
+    else if (visual.object) interactiveRoots.push(visual.object);
+  });
+
+  const hits = clickRaycaster.intersectObjects(interactiveRoots, true);
+  const firstMemoHit = hits.find((hit) => findMemoHoverRoot(hit.object));
+  if (!firstMemoHit) return;
+
+  const root = findMemoHoverRoot(firstMemoHit.object);
+  if (!root || !root.userData.memoIds || !root.userData.memoIds.length) return;
+
+  hideMemoHover();
+  openDetailPanel(root.userData.memoIds);
+}
+
+function openDetailPanel(memoIds) {
+  if (!UI.memoDetailPanel || !memoIds || !memoIds.length) return;
+
+  STATE.detailMemoIds = [...memoIds];
+  const memos = memoIds
+    .map((id) => STATE.memos.find((m) => m.id === id))
+    .filter(Boolean);
+  if (!memos.length) { closeDetailPanel(); return; }
+
+  const firstMemo = memos[0];
+  const categoryLabel = CATEGORY_INFO[firstMemo.category]?.label || firstMemo.category;
+  const toneStr = firstMemo.category === 'emotion' ? ` · ${firstMemo.emotionTone}` : '';
+
+  UI.memoDetailLabel.textContent = categoryLabel + toneStr;
+  UI.memoDetailDate.textContent = formatDate(firstMemo.createdAt);
+
+  if (UI.memoDetailDelete) {
+    UI.memoDetailDelete.hidden = true;
+    UI.memoDetailDelete.disabled = true;
+    UI.memoDetailDelete.setAttribute('aria-hidden', 'true');
+  }
+
+  if (memos.length === 1) {
+    UI.memoDetailText.textContent = firstMemo.transcript || '내용 없음';
+  } else {
+    UI.memoDetailText.textContent = memos
+      .map((m, i) => `${i + 1}. ${m.transcript?.trim() || '내용 없음'}`)
+      .join('\n');
+  }
+
+  const anyActive = memos.some((m) => !m.clearedAt);
+  UI.memoDetailClear.style.display = anyActive ? '' : 'none';
+
+  UI.memoDetailPanel.classList.remove('hidden');
+  UI.memoDetailPanel.classList.add('visible');
+}
+
 function closeDetailPanel() {
-  return;
+  STATE.detailMemoIds = null;
+  if (!UI.memoDetailPanel) return;
+  UI.memoDetailPanel.classList.add('hidden');
+  UI.memoDetailPanel.classList.remove('visible');
 }
 
 function getFloorOnlyScaleMultiplier(assetKey) {
@@ -5535,62 +5847,19 @@ function hydrateLayoutCache(rawLayoutCache) {
   return next;
 }
 
-/* ═══ IndexedDB Storage Layer ═══ */
-function openIDB() {
-  return new Promise((resolve, reject) => {
-    try {
-      const request = indexedDB.open(IDB_DB_NAME, IDB_DB_VERSION);
-      request.onupgradeneeded = (event) => {
-        const db = event.target.result;
-        if (!db.objectStoreNames.contains(IDB_STORE_NAME)) {
-          db.createObjectStore(IDB_STORE_NAME, { keyPath: 'key' });
-        }
-      };
-      request.onsuccess = () => { STATE.idbReady = true; STATE.idbDatabase = request.result; resolve(request.result); };
-      request.onerror = () => { console.warn('IndexedDB open failed'); resolve(null); };
-    } catch (e) { console.warn('IndexedDB unavailable'); resolve(null); }
-  });
+function persistStorage() {
+  const payload = {
+    version: STORAGE_PAYLOAD_VERSION,
+    memos: STATE.memos,
+    layoutCache: serializeLayoutCache(),
+  };
+
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
 }
 
-function idbPut(db, key, value) {
-  return new Promise((resolve) => {
-    try {
-      const tx = db.transaction(IDB_STORE_NAME, 'readwrite');
-      tx.objectStore(IDB_STORE_NAME).put({ key, value });
-      tx.oncomplete = () => resolve(true);
-      tx.onerror = () => resolve(false);
-    } catch (e) { resolve(false); }
-  });
-}
-
-function idbGet(db, key) {
-  return new Promise((resolve) => {
-    try {
-      const tx = db.transaction(IDB_STORE_NAME, 'readonly');
-      const req = tx.objectStore(IDB_STORE_NAME).get(key);
-      req.onsuccess = () => resolve(req.result?.value ?? null);
-      req.onerror = () => resolve(null);
-    } catch (e) { resolve(null); }
-  });
-}
-
-/* ═══ Persist (IndexedDB primary, localStorage backup) ═══ */
-async function loadStorage() {
-  let raw = null;
-
-  /* Try IndexedDB first */
-  if (STATE.idbDatabase) {
-    try {
-      raw = await idbGet(STATE.idbDatabase, STORAGE_KEY);
-    } catch (e) { /* fall through */ }
-  }
-
-  /* Fallback to localStorage */
-  if (!raw) {
-    try { raw = localStorage.getItem(STORAGE_KEY); } catch (e) { /* ignore */ }
-  }
-
+function loadStorage() {
   try {
+    const raw = localStorage.getItem(STORAGE_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
 
     if (Array.isArray(parsed)) {
@@ -5607,507 +5876,9 @@ async function loadStorage() {
       .filter(Boolean);
     STATE.layoutCache = hydrateLayoutCache(parsed?.layoutCache);
   } catch (error) {
-    console.warn('Failed to load storage.', error);
+    console.warn('Failed to load local storage.', error);
     STATE.memos = [];
     STATE.layoutCache = Object.create(null);
-  }
-}
-
-/* ═══ JSON Export / Import ═══ */
-function exportMemosJSON() {
-  const payload = {
-    version: STORAGE_PAYLOAD_VERSION,
-    exportedAt: new Date().toISOString(),
-    memos: STATE.memos.filter(Boolean),
-    layoutCache: serializeLayoutCache(),
-  };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `mind-room-backup-${new Date().toISOString().slice(0, 10)}.json`;
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 200);
-}
-
-function importMemosJSON() {
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = '.json,application/json';
-  input.onchange = async (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    try {
-      const text = await file.text();
-      const parsed = JSON.parse(text);
-      const memoList = Array.isArray(parsed?.memos) ? parsed.memos : Array.isArray(parsed) ? parsed : [];
-      const validMemos = memoList.map((item) => sanitizeStoredMemo(item)).filter(Boolean);
-      if (!validMemos.length) { alert('유효한 메모가 없습니다.'); return; }
-
-      const existingIds = new Set(STATE.memos.map((m) => m.id));
-      let addedCount = 0;
-      validMemos.forEach((memo) => {
-        if (!existingIds.has(memo.id)) {
-          STATE.memos.push(memo);
-          existingIds.add(memo.id);
-          addedCount += 1;
-        }
-      });
-
-      if (parsed?.layoutCache) {
-        const imported = hydrateLayoutCache(parsed.layoutCache);
-        Object.entries(imported).forEach(([key, val]) => {
-          if (!STATE.layoutCache[key]) STATE.layoutCache[key] = val;
-        });
-      }
-
-      persistStorage();
-      rebuildVisuals();
-      renderHistory();
-      alert(`${addedCount}개의 메모를 가져왔습니다.`);
-    } catch (e) {
-      console.error('Import failed', e);
-      alert('파일을 읽을 수 없습니다.');
-    }
-  };
-  input.click();
-}
-
-/* ═══ Device Orientation (Tilt) ═══ */
-function setupDeviceOrientation() {
-  const handleOrientation = (event) => {
-    const beta = event.beta ?? 0;   /* front-back tilt: -180..180 */
-    const gamma = event.gamma ?? 0; /* left-right tilt: -90..90 */
-    STATE.tilt.rawBeta = beta;
-    STATE.tilt.rawGamma = gamma;
-    STATE.tilt.active = true;
-  };
-
-  if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-    /* iOS 13+ */
-    document.addEventListener('click', function iosOrientationPermission() {
-      DeviceOrientationEvent.requestPermission().then((response) => {
-        if (response === 'granted') {
-          window.addEventListener('deviceorientation', handleOrientation, { passive: true });
-        }
-      }).catch(() => {});
-      document.removeEventListener('click', iosOrientationPermission);
-    }, { once: true });
-  } else {
-    window.addEventListener('deviceorientation', handleOrientation, { passive: true });
-  }
-}
-
-function updateTiltSmoothing() {
-  if (!STATE.tilt.active) return;
-  /* Normalize beta(front-back) → Z force, gamma(left-right) → X force */
-  /* Use symmetric gamma mapping for balanced left-right movement */
-  const rawGamma = STATE.tilt.rawGamma;
-  const targetX = clamp(rawGamma / 30, -1, 1) * PHYSICS_TILT_FORCE;
-  const targetZ = clamp((STATE.tilt.rawBeta - 45) / 30, -1, 1) * PHYSICS_TILT_FORCE;
-  STATE.tilt.x += (targetX - STATE.tilt.x) * PHYSICS_TILT_SMOOTHING;
-  STATE.tilt.z += (targetZ - STATE.tilt.z) * PHYSICS_TILT_SMOOTHING;
-}
-
-/* ═══ Physics System ═══ */
-function isRecentPhysicsLockedMemo(memo) {
-  if (!memo?.createdAt) return false;
-  const ageMs = Date.now() - new Date(memo.createdAt).getTime();
-  const ageHours = ageMs / (1000 * 60 * 60);
-  return ageHours < PHYSICS_AGE_RECENT_HOURS;
-}
-
-function getPhysicsFriction(memo) {
-  if (!memo) return PHYSICS_FRICTION_MID;
-  const ageMs = Date.now() - new Date(memo.createdAt).getTime();
-  const ageHours = ageMs / (1000 * 60 * 60);
-  if (ageHours < PHYSICS_AGE_RECENT_HOURS) return PHYSICS_FRICTION_RECENT;
-  const ageDays = ageHours / 24;
-  if (ageDays >= PHYSICS_AGE_OLD_DAYS) return PHYSICS_FRICTION_OLD;
-  const t = (ageDays - (PHYSICS_AGE_RECENT_HOURS / 24)) / (PHYSICS_AGE_OLD_DAYS - (PHYSICS_AGE_RECENT_HOURS / 24));
-  return THREE.MathUtils.lerp(PHYSICS_FRICTION_RECENT, PHYSICS_FRICTION_OLD, clamp(t, 0, 1));
-}
-
-function initVisualPhysics(visual) {
-  if (!visual || visual.kind !== 'asset') return;
-  const memo = visual.memoIds?.length ? STATE.memos.find((m) => m.id === visual.memoIds[0]) : null;
-  visual.phys = {
-    vx: 0,
-    vz: 0,
-    friction: getPhysicsFriction(memo),
-    restX: visual.object?.position.x ?? 0,
-    restZ: visual.object?.position.z ?? 0,
-    settled: true,
-    onDesk: visual.object?.position.y > 0.5,
-  };
-}
-
-function updatePhysics(delta) {
-  if (!STATE.physicsEnabled) return;
-  updateTiltSmoothing();
-
-  const forceX = STATE.tilt.x;
-  const forceZ = STATE.tilt.z;
-  const hasForce = Math.abs(forceX) > 0.0003 || Math.abs(forceZ) > 0.0003;
-
-  /* ── Pre-compute separation forces between all active (non-locked) GLBs ── */
-  const activeVisuals = [];
-  STATE.visuals.forEach((visual) => {
-    if (visual.kind !== 'asset' || !visual.object || !visual.phys) return;
-    if (visual === STATE.grabbedVisual) return;
-    if (visual.dropIntro) return;
-    const memo = visual.memoIds?.length ? STATE.memos.find((m) => m.id === visual.memoIds[0]) : null;
-    if (isRecentPhysicsLockedMemo(memo)) return;
-    activeVisuals.push(visual);
-  });
-
-  /* Accumulate separation impulses */
-  const sepImpulses = new Map();
-  for (let i = 0; i < activeVisuals.length; i++) {
-    const a = activeVisuals[i];
-    if (!sepImpulses.has(a)) sepImpulses.set(a, { x: 0, z: 0 });
-    for (let j = i + 1; j < activeVisuals.length; j++) {
-      const b = activeVisuals[j];
-      if (!sepImpulses.has(b)) sepImpulses.set(b, { x: 0, z: 0 });
-      const dx = a.object.position.x - b.object.position.x;
-      const dz = a.object.position.z - b.object.position.z;
-      const dist = Math.sqrt(dx * dx + dz * dz);
-      if (dist < PHYSICS_SEPARATION_RADIUS && dist > 0.001) {
-        const overlap = (PHYSICS_SEPARATION_RADIUS - dist) / PHYSICS_SEPARATION_RADIUS;
-        const strength = overlap * overlap * PHYSICS_SEPARATION_FORCE;
-        const nx = dx / dist;
-        const nz = dz / dist;
-        const impA = sepImpulses.get(a);
-        const impB = sepImpulses.get(b);
-        impA.x += nx * strength;
-        impA.z += nz * strength;
-        impB.x -= nx * strength;
-        impB.z -= nz * strength;
-      }
-    }
-  }
-
-  STATE.visuals.forEach((visual) => {
-    if (visual.kind !== 'asset' || !visual.object || !visual.phys) return;
-    if (visual === STATE.grabbedVisual) return;
-    if (visual.dropIntro) return;
-
-    const p = visual.phys;
-    const memo = visual.memoIds?.length ? STATE.memos.find((m) => m.id === visual.memoIds[0]) : null;
-    p.friction = getPhysicsFriction(memo);
-
-    if (isRecentPhysicsLockedMemo(memo)) {
-      p.vx = 0;
-      p.vz = 0;
-      p.settled = true;
-      visual.object.position.x = p.restX;
-      visual.object.position.z = p.restZ;
-      visual.object.updateMatrixWorld(true);
-      return;
-    }
-
-    /* Desk items don't respond to tilt as much */
-    const tiltScale = p.onDesk ? 0.15 : 1.0;
-
-    if (hasForce) {
-      p.vx += forceX * (1 - p.friction) * 3.0 * tiltScale;
-      p.vz += forceZ * (1 - p.friction) * 3.0 * tiltScale;
-      p.settled = false;
-    }
-
-    /* Apply separation impulse */
-    const sep = sepImpulses.get(visual);
-    if (sep && (Math.abs(sep.x) > 0.0001 || Math.abs(sep.z) > 0.0001)) {
-      p.vx += sep.x;
-      p.vz += sep.z;
-      p.settled = false;
-    }
-
-    /* Apply friction */
-    p.vx *= p.friction;
-    p.vz *= p.friction;
-
-    /* Clamp max velocity */
-    const speed = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
-    if (speed > PHYSICS_MAX_VELOCITY) {
-      const scale = PHYSICS_MAX_VELOCITY / speed;
-      p.vx *= scale;
-      p.vz *= scale;
-    }
-
-    /* If nearly stopped, settle */
-    if (speed < PHYSICS_REST_THRESHOLD && !hasForce) {
-      if (!p.settled) {
-        /* Gently return to rest position */
-        const dx = p.restX - visual.object.position.x;
-        const dz = p.restZ - visual.object.position.z;
-        const returnDist = Math.sqrt(dx * dx + dz * dz);
-        if (returnDist > 0.01) {
-          visual.object.position.x += dx * 0.03;
-          visual.object.position.z += dz * 0.03;
-        } else {
-          visual.object.position.x = p.restX;
-          visual.object.position.z = p.restZ;
-          p.settled = true;
-        }
-      }
-      p.vx = 0;
-      p.vz = 0;
-      return;
-    }
-
-    /* Apply velocity */
-    visual.object.position.x += p.vx;
-    visual.object.position.z += p.vz;
-
-    /* Room bounds with bounce */
-    const b = PHYSICS_ROOM_BOUNDS;
-    if (visual.object.position.x < b.minX) { visual.object.position.x = b.minX; p.vx *= -PHYSICS_BOUNCE_FACTOR; }
-    if (visual.object.position.x > b.maxX) { visual.object.position.x = b.maxX; p.vx *= -PHYSICS_BOUNCE_FACTOR; }
-    if (visual.object.position.z < b.minZ) { visual.object.position.z = b.minZ; p.vz *= -PHYSICS_BOUNCE_FACTOR; }
-    if (visual.object.position.z > b.maxZ) { visual.object.position.z = b.maxZ; p.vz *= -PHYSICS_BOUNCE_FACTOR; }
-
-    visual.object.updateMatrixWorld(true);
-  });
-}
-
-/* ═══ Long-Press / Drag / Throw Interaction ═══ */
-function setupInteraction() {
-  const canvas = STATE.renderer?.domElement;
-  if (!canvas) return;
-
-  const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-  const intersectPoint = new THREE.Vector3();
-  const pointerRay = new THREE.Raycaster();
-
-  function getNDC(clientX, clientY) {
-    const rect = canvas.getBoundingClientRect();
-    return new THREE.Vector2(
-      ((clientX - rect.left) / rect.width) * 2 - 1,
-      -((clientY - rect.top) / rect.height) * 2 + 1,
-    );
-  }
-
-  function findVisualFromIntersect(clientX, clientY) {
-    const ndc = getNDC(clientX, clientY);
-    pointerRay.setFromCamera(ndc, STATE.camera);
-
-    const meshes = [];
-    STATE.visuals.forEach((v) => {
-      if (v.kind !== 'asset' || !v.object) return;
-      if (v.hoverProxy) meshes.push(v.hoverProxy);
-      v.object.traverse((child) => { if (child.isMesh) meshes.push(child); });
-    });
-
-    const hits = pointerRay.intersectObjects(meshes, false);
-    if (!hits.length) return null;
-
-    for (const hit of hits) {
-      const root = findMemoHoverRoot(hit.object);
-      if (!root) continue;
-      const visual = STATE.visuals.find((v) => v.object === root || v.object === root.userData?.hoverOwner);
-      if (visual) return visual;
-      /* Try via hoverOwner */
-      if (root.userData?.hoverOwner) {
-        const ownerVisual = STATE.visuals.find((v) => v.object === root.userData.hoverOwner);
-        if (ownerVisual) return ownerVisual;
-      }
-    }
-    return null;
-  }
-
-  function getFloorPosition(clientX, clientY, yOverride) {
-    const ndc = getNDC(clientX, clientY);
-    pointerRay.setFromCamera(ndc, STATE.camera);
-    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -(yOverride ?? 0));
-    const pt = new THREE.Vector3();
-    pointerRay.ray.intersectPlane(plane, pt);
-    return pt;
-  }
-
-  function onPointerDown(event) {
-    if (event.button && event.button !== 0) return;
-    if (!UI.entryPanel.classList.contains('hidden') || !UI.historyPanel.classList.contains('hidden')) return;
-
-    const gs = {
-      startTime: Date.now(),
-      startX: event.clientX,
-      startY: event.clientY,
-      pointerId: event.pointerId,
-      isDragging: false,
-      velocityHistory: [],
-      lastX: event.clientX,
-      lastY: event.clientY,
-      lastTime: Date.now(),
-      liftY: 0.6,
-    };
-    STATE.grabState = gs;
-
-    /* Start long-press timer */
-    clearTimeout(STATE.longPressTimer);
-    STATE.longPressTimer = setTimeout(() => {
-      if (!STATE.grabState || STATE.grabState.pointerId !== gs.pointerId) return;
-      const visual = findVisualFromIntersect(gs.startX, gs.startY);
-      if (!visual || visual.kind !== 'asset' || !visual.object) { STATE.grabState = null; return; }
-
-      STATE.grabbedVisual = visual;
-      gs.isDragging = true;
-      gs.liftY = visual.object.position.y + 0.6;
-
-      /* Haptic feedback if available */
-      if (navigator.vibrate) navigator.vibrate(25);
-
-      canvas.style.cursor = 'grabbing';
-      canvas.setPointerCapture(gs.pointerId);
-    }, LONG_PRESS_MS);
-  }
-
-  function onPointerMove(event) {
-    if (!STATE.grabState) return;
-    const gs = STATE.grabState;
-
-    /* Check if finger moved too far before long-press triggers → cancel */
-    if (!gs.isDragging) {
-      const dx = event.clientX - gs.startX;
-      const dy = event.clientY - gs.startY;
-      if (Math.sqrt(dx * dx + dy * dy) > DRAG_DEAD_ZONE) {
-        clearTimeout(STATE.longPressTimer);
-        STATE.grabState = null;
-        return;
-      }
-      return;
-    }
-
-    /* Dragging */
-    const visual = STATE.grabbedVisual;
-    if (!visual || !visual.object) return;
-
-    const floorPos = getFloorPosition(event.clientX, event.clientY, gs.liftY);
-    if (floorPos) {
-      visual.object.position.x = clamp(floorPos.x, PHYSICS_ROOM_BOUNDS.minX, PHYSICS_ROOM_BOUNDS.maxX);
-      visual.object.position.z = clamp(floorPos.z, PHYSICS_ROOM_BOUNDS.minZ, PHYSICS_ROOM_BOUNDS.maxZ);
-      visual.object.position.y = gs.liftY;
-      visual.object.updateMatrixWorld(true);
-    }
-
-    /* Record velocity history */
-    const now = Date.now();
-    gs.velocityHistory.push({ x: event.clientX, y: event.clientY, t: now });
-    if (gs.velocityHistory.length > VELOCITY_HISTORY_SIZE) gs.velocityHistory.shift();
-    gs.lastX = event.clientX;
-    gs.lastY = event.clientY;
-    gs.lastTime = now;
-  }
-
-  function onPointerUp(event) {
-    clearTimeout(STATE.longPressTimer);
-    const gs = STATE.grabState;
-    STATE.grabState = null;
-    canvas.style.cursor = '';
-
-    if (!gs || !gs.isDragging || !STATE.grabbedVisual) {
-      STATE.grabbedVisual = null;
-      return;
-    }
-
-    const visual = STATE.grabbedVisual;
-    STATE.grabbedVisual = null;
-
-    if (!visual.object || !visual.phys) return;
-
-    /* Calculate throw velocity from pointer history */
-    let throwVX = 0, throwVZ = 0;
-    if (gs.velocityHistory.length >= 2) {
-      const recent = gs.velocityHistory[gs.velocityHistory.length - 1];
-      const older = gs.velocityHistory[0];
-      const dt = Math.max(recent.t - older.t, 1);
-      const dxScreen = recent.x - older.x;
-      const dyScreen = recent.y - older.y;
-
-      /* Convert screen velocity to world velocity (approximate) */
-      const floorA = getFloorPosition(older.x, older.y, visual.phys.restX > 0.5 ? gs.liftY : 0);
-      const floorB = getFloorPosition(recent.x, recent.y, visual.phys.restX > 0.5 ? gs.liftY : 0);
-      if (floorA && floorB) {
-        throwVX = ((floorB.x - floorA.x) / dt) * 1000 * PHYSICS_THROW_MULTIPLIER;
-        throwVZ = ((floorB.z - floorA.z) / dt) * 1000 * PHYSICS_THROW_MULTIPLIER;
-      }
-    }
-
-    /* Drop object to floor/desk level */
-    const wasOnDesk = visual.phys.onDesk;
-    const deskBounds = getDeskSurfaceBounds();
-    const isOverDesk = visual.object.position.x >= deskBounds.minX - 0.5
-      && visual.object.position.x <= deskBounds.maxX + 0.5
-      && visual.object.position.z >= deskBounds.minZ - 0.5
-      && visual.object.position.z <= deskBounds.maxZ + 0.5;
-
-    if (isOverDesk && STATE.room.deskTopY) {
-      restObjectOnY(visual.object, STATE.room.deskTopY);
-      visual.phys.onDesk = true;
-    } else {
-      restObjectOnY(visual.object, 0.02);
-      visual.phys.onDesk = false;
-    }
-
-    /* Apply throw velocity */
-    visual.phys.vx = clamp(throwVX, -PHYSICS_MAX_VELOCITY, PHYSICS_MAX_VELOCITY);
-    visual.phys.vz = clamp(throwVZ, -PHYSICS_MAX_VELOCITY, PHYSICS_MAX_VELOCITY);
-    visual.phys.settled = false;
-
-    /* Update rest position to new dropped position */
-    visual.phys.restX = visual.object.position.x;
-    visual.phys.restZ = visual.object.position.z;
-
-    /* Persist the new position */
-    const layoutKey = visual.object?.userData?.layoutCacheKey;
-    if (layoutKey) {
-      syncLayoutCacheFromObject(layoutKey, visual.object, visual.object.userData.layoutCacheExtra || {});
-      persistStorage();
-    }
-
-    try { canvas.releasePointerCapture(event.pointerId); } catch (e) { /* ignore */ }
-  }
-
-  function onPointerCancel(event) {
-    clearTimeout(STATE.longPressTimer);
-    if (STATE.grabbedVisual && STATE.grabbedVisual.object && STATE.grabbedVisual.phys) {
-      restObjectOnY(STATE.grabbedVisual.object, STATE.grabbedVisual.phys.onDesk ? (STATE.room.deskTopY || 1.28) : 0.02);
-    }
-    STATE.grabState = null;
-    STATE.grabbedVisual = null;
-    canvas.style.cursor = '';
-  }
-
-  canvas.addEventListener('pointerdown', onPointerDown, { passive: false });
-  canvas.addEventListener('pointermove', onPointerMove, { passive: false });
-  canvas.addEventListener('pointerup', onPointerUp, { passive: false });
-  canvas.addEventListener('pointercancel', onPointerCancel, { passive: false });
-
-  /* Prevent context menu on long-press (mobile) */
-  canvas.addEventListener('contextmenu', (e) => { if (STATE.grabState) e.preventDefault(); });
-
-  /* Prevent touch scrolling while dragging */
-  canvas.addEventListener('touchmove', (e) => {
-    if (STATE.grabState?.isDragging) e.preventDefault();
-  }, { passive: false });
-}
-
-function persistStorage() {
-  const payload = {
-    version: STORAGE_PAYLOAD_VERSION,
-    memos: STATE.memos,
-    layoutCache: serializeLayoutCache(),
-  };
-
-  const json = JSON.stringify(payload);
-
-  /* localStorage backup (always) */
-  try { localStorage.setItem(STORAGE_KEY, json); } catch (e) { console.warn('localStorage write failed', e); }
-
-  /* IndexedDB primary */
-  if (STATE.idbDatabase) {
-    idbPut(STATE.idbDatabase, STORAGE_KEY, json).catch(() => {});
   }
 }
 
@@ -6421,4 +6192,4 @@ function createTumblerFallback() {
   group.add(lid);
 
   return group;
-}v
+}
