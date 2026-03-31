@@ -16,22 +16,27 @@ const HEAVY_DUMMY_MEMO_COUNTS = Object.freeze({
 const NON_DESK_SCALE_MULTIPLIER = 2;
 
 /* ═══ Physics & Interaction Constants ═══ */
-const PHYSICS_FRICTION_RECENT = 0.96;
-const PHYSICS_FRICTION_OLD = 0.78;
-const PHYSICS_FRICTION_MID = 0.88;
+const PHYSICS_FRICTION_RECENT = 0.9945;
+const PHYSICS_FRICTION_OLD = 0.7;
+const PHYSICS_FRICTION_MID = 0.84;
 const PHYSICS_AGE_RECENT_HOURS = 72;
 const PHYSICS_AGE_OLD_DAYS = 3;
-const PHYSICS_TILT_FORCE = 0.035;
-const PHYSICS_TILT_SMOOTHING = 0.08;
-const PHYSICS_REST_THRESHOLD = 0.0008;
-const PHYSICS_MAX_VELOCITY = 0.35;
-const PHYSICS_THROW_MULTIPLIER = 0.018;
-const PHYSICS_THROW_FRICTION = 0.92;
-const PHYSICS_BOUNCE_FACTOR = 0.3;
+const PHYSICS_TILT_FORCE = 0.11;
+const PHYSICS_TILT_SMOOTHING = 0.24;
+const PHYSICS_REST_THRESHOLD = 0.0012;
+const PHYSICS_MAX_VELOCITY = 0.92;
+const PHYSICS_THROW_MULTIPLIER = 0.032;
+const PHYSICS_THROW_FRICTION = 0.97;
+const PHYSICS_BOUNCE_FACTOR = 0.38;
 const PHYSICS_ROOM_BOUNDS = { minX: -8.2, maxX: 8.8, minZ: -5.8, maxZ: 3.6 };
 const LONG_PRESS_MS = 500;
 const DRAG_DEAD_ZONE = 6;
 const VELOCITY_HISTORY_SIZE = 6;
+const MOBILE_TILT_MAX_WIDTH = 1024;
+const ORIENTATION_INPUT_RANGE_DEG = 18;
+const ORIENTATION_REST_DEAD_ZONE_DEG = 1.35;
+const ORIENTATION_BASELINE_LERP = 0.08;
+const ORIENTATION_IDLE_DECAY_MS = 260;
 const IDB_DB_NAME = 'mind-room-db';
 const IDB_STORE_NAME = 'app-data';
 const IDB_DB_VERSION = 1;
@@ -1203,10 +1208,22 @@ const STATE = {
   pendingVisualRebuild: false,
   appReady: false,
   loadingOverlay: null,
+  hasOrientationPermission: false,
+  useDeviceOrientation: false,
+  orientationListenerAttached: false,
   playedEmotionRewardDropMemoIds: new Set(),
   layoutCache: Object.create(null),
   /* physics & interaction */
-  tilt: { x: 0, z: 0, rawBeta: 0, rawGamma: 0, active: false },
+  tilt: {
+    x: 0,
+    z: 0,
+    rawBeta: 0,
+    rawGamma: 0,
+    active: false,
+    baseBeta: null,
+    baseGamma: null,
+    lastEventAt: 0,
+  },
   grabbedVisual: null,
   grabState: null, /* { startTime, startX, startY, pointerId, isDragging, velocityHistory, lastX, lastY, lastTime, liftY } */
   longPressTimer: null,
@@ -1257,6 +1274,7 @@ const EASTER_SNACK_BATCH_SIZE = 5;
 const EASTER_EMOTION_BATCH_SIZE = 10;
 const EASTER_ROUTINE_BATCH_SIZE = 10;
 const EASTER_ULTRA_RARE_CHANCE = 0.0025;
+const EASTER_RA3_RELOAD_CHANCE = 0.018;
 const EASTER_RA4_COOLDOWN_MS = 12 * 60 * 1000;
 
 
@@ -1354,21 +1372,22 @@ function showEasterRa1() {
   animateAndRemove(img, [
     { opacity: 0, transform: 'translate(-50%, -50%) scale(0.82)' },
     { opacity: 1, transform: 'translate(-50%, -50%) scale(1)', offset: 0.18 },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(1.03)', offset: 0.78 },
-    { opacity: 0, transform: 'translate(-50%, -50%) scale(1.1)' },
-  ], { duration: 1320, easing: 'cubic-bezier(0.22, 0.8, 0.25, 1)', fill: 'forwards' });
+    { opacity: 1, transform: 'translate(-50%, -50%) scale(1.03)', offset: 0.84 },
+    { opacity: 0, transform: 'translate(-50%, -50%) scale(1.11)' },
+  ], { duration: 1680, easing: 'cubic-bezier(0.22, 0.8, 0.25, 1)', fill: 'forwards' });
 }
 
 function showEasterRa2() {
   const img = createEasterImage('ra2', { width: 'min(36vw, 320px)', maxWidth: '48vw', maxHeight: '48vh' });
   animateAndRemove(img, [
     { opacity: 0, transform: 'translate(-50%, -50%) scale(0.18)' },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(0.32)', offset: 0.18 },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(0.88)', offset: 0.5 },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(2.2)', offset: 0.72 },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(5.4)', offset: 0.86 },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(12.8)' },
-  ], { duration: 2060, easing: 'cubic-bezier(0.1, 0.66, 0.16, 1)', fill: 'forwards' });
+    { opacity: 1, transform: 'translate(-50%, -50%) scale(0.32)', offset: 0.14 },
+    { opacity: 1, transform: 'translate(-50%, -50%) scale(0.92)', offset: 0.38 },
+    { opacity: 1, transform: 'translate(-50%, -50%) scale(2.8)', offset: 0.62 },
+    { opacity: 1, transform: 'translate(-50%, -50%) scale(6.4)', offset: 0.8 },
+    { opacity: 1, transform: 'translate(-50%, -50%) scale(11.2)', offset: 0.9 },
+    { opacity: 0, transform: 'translate(-50%, -50%) scale(14.2)' },
+  ], { duration: 2680, easing: 'cubic-bezier(0.1, 0.66, 0.16, 1)', fill: 'forwards' });
 }
 
 function showEasterRa3() {
@@ -1403,10 +1422,10 @@ function showEasterRa4() {
   });
   animateAndRemove(img, [
     { opacity: 0, transform: 'translate(-50%, -50%) scale(0.78)' },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(1)', offset: 0.22 },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(1.02)', offset: 0.76 },
-    { opacity: 0, transform: 'translate(-50%, -50%) scale(1.08)' },
-  ], { duration: 1120, easing: 'ease-out', fill: 'forwards' });
+    { opacity: 1, transform: 'translate(-50%, -50%) scale(1)', offset: 0.2 },
+    { opacity: 1, transform: 'translate(-50%, -50%) scale(1.03)', offset: 0.8 },
+    { opacity: 0, transform: 'translate(-50%, -50%) scale(1.1)' },
+  ], { duration: 1540, easing: 'ease-out', fill: 'forwards' });
 }
 
 function showEasterRa5() {
@@ -1414,9 +1433,9 @@ function showEasterRa5() {
   animateAndRemove(img, [
     { opacity: 0, transform: 'translate(-50%, -50%) scale(0.84)' },
     { opacity: 1, transform: 'translate(-50%, -50%) scale(1)', offset: 0.2 },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(1.03)', offset: 0.78 },
+    { opacity: 1, transform: 'translate(-50%, -50%) scale(1.03)', offset: 0.84 },
     { opacity: 0, transform: 'translate(-50%, -50%) scale(1.1)' },
-  ], { duration: 1180, easing: 'cubic-bezier(0.23, 0.82, 0.24, 1)', fill: 'forwards' });
+  ], { duration: 1620, easing: 'cubic-bezier(0.23, 0.82, 0.24, 1)', fill: 'forwards' });
 }
 
 function showEasterRa6() {
@@ -1424,9 +1443,9 @@ function showEasterRa6() {
   animateAndRemove(img, [
     { opacity: 0, transform: 'translate(-50%, -50%) scale(0.82)' },
     { opacity: 1, transform: 'translate(-50%, -50%) scale(1)', offset: 0.2 },
-    { opacity: 1, transform: 'translate(-50%, -50%) scale(1.02)', offset: 0.76 },
+    { opacity: 1, transform: 'translate(-50%, -50%) scale(1.02)', offset: 0.84 },
     { opacity: 0, transform: 'translate(-50%, -50%) scale(1.08)' },
-  ], { duration: 1160, easing: 'ease-out', fill: 'forwards' });
+  ], { duration: 1600, easing: 'ease-out', fill: 'forwards' });
 }
 
 function getRealMemoCountByCategory(category) {
@@ -1441,21 +1460,19 @@ function resetDeleteStreak() {
 
 function maybeTriggerUltraRareRa4() {
   const now = Date.now();
-  if (STATE.easter.sessionRa4Shown) return;
   if (now - (STATE.easter.cooldowns.ra4 || 0) < EASTER_RA4_COOLDOWN_MS) return;
   if (Math.random() >= EASTER_ULTRA_RARE_CHANCE) return;
 
-  STATE.easter.sessionRa4Shown = true;
   STATE.easter.cooldowns.ra4 = now;
   persistEasterState();
   showEasterRa4();
 }
 
 function maybeTriggerReloadRa3() {
-  if (Math.random() >= 0.1) return;
+  if (Math.random() >= EASTER_RA3_RELOAD_CHANCE) return;
   window.setTimeout(() => {
     showEasterRa3();
-  }, 380 + Math.random() * 540);
+  }, 420 + Math.random() * 620);
 }
 
 function scheduleCreationEaster(triggerCount, validator, callback) {
@@ -1525,6 +1542,18 @@ function maybeTriggerCreationEasters(memo) {
   maybeTriggerUltraRareRa4();
 }
 
+function scheduleDeleteStreakEaster(triggerCount, triggerTime) {
+  window.setTimeout(() => {
+    const elapsedSinceLastDelete = Date.now() - (STATE.easter.lastDeleteAt || 0);
+    const stillSameStreak = STATE.easter.deleteStreakCount >= triggerCount
+      && STATE.easter.lastDeleteAt >= triggerTime
+      && elapsedSinceLastDelete <= EASTER_DELETE_STREAK_WINDOW_MS;
+
+    if (!stillSameStreak) return;
+    showEasterRa2();
+  }, EASTER_CREATION_DELAY_MS);
+}
+
 function registerDeleteActionForEaster() {
   const now = Date.now();
   const elapsed = now - (STATE.easter.lastDeleteAt || 0);
@@ -1540,9 +1569,7 @@ function registerDeleteActionForEaster() {
 
   if (STATE.easter.deleteStreakCount >= EASTER_DELETE_STREAK_TRIGGER
       && STATE.easter.deleteStreakCount % EASTER_DELETE_STREAK_TRIGGER === 0) {
-    window.setTimeout(() => {
-      showEasterRa2();
-    }, EASTER_CREATION_DELAY_MS);
+    scheduleDeleteStreakEaster(STATE.easter.deleteStreakCount, now);
   }
 
   maybeTriggerUltraRareRa4();
@@ -1655,18 +1682,123 @@ async function init() {
   hideLoadingOverlay();
 }
 
+
+function isMobileTiltTarget() {
+  const hasTouch = window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+  return hasTouch && (window.innerWidth || window.screen?.width || 0) <= MOBILE_TILT_MAX_WIDTH;
+}
+
+function resetTiltState() {
+  STATE.tilt.x = 0;
+  STATE.tilt.z = 0;
+  STATE.tilt.rawBeta = 0;
+  STATE.tilt.rawGamma = 0;
+  STATE.tilt.active = false;
+  STATE.tilt.baseBeta = null;
+  STATE.tilt.baseGamma = null;
+  STATE.tilt.lastEventAt = 0;
+}
+
+function handleDeviceOrientation(event) {
+  if (!STATE.useDeviceOrientation || !isMobileTiltTarget()) return;
+  if (!Number.isFinite(event.beta) || !Number.isFinite(event.gamma)) return;
+
+  const beta = event.beta;
+  const gamma = event.gamma;
+
+  if (STATE.tilt.baseBeta === null || STATE.tilt.baseGamma === null) {
+    STATE.tilt.baseBeta = beta;
+    STATE.tilt.baseGamma = gamma;
+  }
+
+  let deltaBeta = beta - STATE.tilt.baseBeta;
+  let deltaGamma = gamma - STATE.tilt.baseGamma;
+
+  if (Math.abs(deltaBeta) < ORIENTATION_REST_DEAD_ZONE_DEG) {
+    STATE.tilt.baseBeta += (beta - STATE.tilt.baseBeta) * ORIENTATION_BASELINE_LERP;
+    deltaBeta = beta - STATE.tilt.baseBeta;
+  }
+
+  if (Math.abs(deltaGamma) < ORIENTATION_REST_DEAD_ZONE_DEG) {
+    STATE.tilt.baseGamma += (gamma - STATE.tilt.baseGamma) * ORIENTATION_BASELINE_LERP;
+    deltaGamma = gamma - STATE.tilt.baseGamma;
+  }
+
+  STATE.tilt.rawBeta = deltaBeta;
+  STATE.tilt.rawGamma = deltaGamma;
+  STATE.tilt.active = true;
+  STATE.tilt.lastEventAt = Date.now();
+}
+
+function startDeviceOrientationListener() {
+  if (STATE.orientationListenerAttached || !window.DeviceOrientationEvent) return false;
+  window.addEventListener('deviceorientation', handleDeviceOrientation, { passive: true });
+  STATE.orientationListenerAttached = true;
+  return true;
+}
+
+function waitForMicPermissionSoft(timeoutMs = 2200) {
+  return Promise.race([
+    requestMicrophonePermission(),
+    new Promise((resolve) => window.setTimeout(() => resolve(false), timeoutMs)),
+  ]);
+}
+
+async function requestOrientationPermission() {
+  if (!isMobileTiltTarget()) {
+    STATE.useDeviceOrientation = false;
+    STATE.hasOrientationPermission = false;
+    resetTiltState();
+    return false;
+  }
+
+  if (STATE.hasOrientationPermission) return true;
+  if (!window.DeviceOrientationEvent) return false;
+
+  resetTiltState();
+
+  if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+    try {
+      const result = await DeviceOrientationEvent.requestPermission();
+      if (result !== 'granted') return false;
+      STATE.hasOrientationPermission = true;
+      STATE.useDeviceOrientation = true;
+      startDeviceOrientationListener();
+      return true;
+    } catch (error) {
+      console.warn('Device orientation permission error:', error);
+      return false;
+    }
+  }
+
+  STATE.hasOrientationPermission = true;
+  STATE.useDeviceOrientation = true;
+  startDeviceOrientationListener();
+  return true;
+}
+
 function setupUI() {
   UI.allowMic.addEventListener('click', async () => {
-    const ok = await requestMicrophonePermission();
-    if (!ok) return;
-    UI.permissionModal.classList.remove('visible');
-    ensureRecognition();
+    UI.allowMic.disabled = true;
 
     if (!STATE.appReady) {
       showLoadingOverlay('...');
     } else {
       hideLoadingOverlay();
     }
+
+    UI.permissionModal.classList.remove('visible');
+
+    const [micOk] = await Promise.all([
+      waitForMicPermissionSoft(),
+      isMobileTiltTarget() ? requestOrientationPermission() : Promise.resolve(false),
+    ]);
+
+    if (micOk) {
+      ensureRecognition();
+    }
+
+    UI.allowMic.disabled = false;
   });
 
   UI.recordBtn.addEventListener('click', async () => {
@@ -5069,26 +5201,37 @@ function createAndAttachEmotionVisual(memo, animateMemoId = null) {
   });
 
   updateCounts();
+  refreshAllVisualPhysics();
   STATE.lastVisualSignature = buildVisualSignature();
   return true;
 }
 
 function createAndAttachVisualForMemo(memo, animateMemoId = null) {
   if (!memo || memo.clearedAt) return false;
+  let handled = false;
   switch (memo.category) {
     case 'record':
-      return createAndAttachRecordVisual(memo, animateMemoId);
+      handled = createAndAttachRecordVisual(memo, animateMemoId);
+      break;
     case 'clutter':
-      return createAndAttachClutterVisual(memo, animateMemoId);
+      handled = createAndAttachClutterVisual(memo, animateMemoId);
+      break;
     case 'routine':
-      return createAndAttachRoutineVisual(memo, animateMemoId);
+      handled = createAndAttachRoutineVisual(memo, animateMemoId);
+      break;
     case 'snack':
-      return createAndAttachSnackVisual(memo, animateMemoId);
+      handled = createAndAttachSnackVisual(memo, animateMemoId);
+      break;
     case 'emotion':
-      return createAndAttachEmotionVisual(memo, animateMemoId);
+      handled = createAndAttachEmotionVisual(memo, animateMemoId);
+      break;
     default:
-      return false;
+      handled = false;
+      break;
   }
+
+  if (handled) refreshAllVisualPhysics();
+  return handled;
 }
 
 function findVisualForMemoId(memoId) {
@@ -5155,6 +5298,7 @@ function removeMemoVisualIncrementally(memo) {
   removeLayoutCacheForMemo(memo);
   removeVisualsForMemoId(memo.id);
   updateCounts();
+  refreshAllVisualPhysics();
   STATE.lastVisualSignature = buildVisualSignature();
   return true;
 }
@@ -5440,6 +5584,7 @@ function onResize() {
 
 function onPointerMove(event) {
   if (!STATE.renderer) return;
+  if (isMobileTiltTarget()) return;
   const rect = STATE.renderer.domElement.getBoundingClientRect();
   STATE.pointer.x = ((((event.clientX - rect.left) / rect.width) * 2) - 1) * 0.9;
   STATE.pointer.y = ((-((event.clientY - rect.top) / rect.height) * 2) + 1) * 0.9;
@@ -5832,46 +5977,50 @@ function importMemosJSON() {
 
 /* ═══ Device Orientation (Tilt) ═══ */
 function setupDeviceOrientation() {
-  const handleOrientation = (event) => {
-    const beta = event.beta ?? 0;   /* front-back tilt: -180..180 */
-    const gamma = event.gamma ?? 0; /* left-right tilt: -90..90 */
-    STATE.tilt.rawBeta = beta;
-    STATE.tilt.rawGamma = gamma;
-    STATE.tilt.active = true;
-  };
+  if (!isMobileTiltTarget()) {
+    STATE.useDeviceOrientation = false;
+    STATE.hasOrientationPermission = false;
+    resetTiltState();
+    return;
+  }
 
-  if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-    /* iOS 13+ */
-    document.addEventListener('click', function iosOrientationPermission() {
-      DeviceOrientationEvent.requestPermission().then((response) => {
-        if (response === 'granted') {
-          window.addEventListener('deviceorientation', handleOrientation, { passive: true });
-        }
-      }).catch(() => {});
-      document.removeEventListener('click', iosOrientationPermission);
-    }, { once: true });
-  } else {
-    window.addEventListener('deviceorientation', handleOrientation, { passive: true });
+  if (!window.DeviceOrientationEvent) {
+    STATE.useDeviceOrientation = false;
+    STATE.hasOrientationPermission = false;
+    resetTiltState();
+    return;
+  }
+
+  if (typeof DeviceOrientationEvent.requestPermission !== 'function') {
+    STATE.hasOrientationPermission = true;
+    STATE.useDeviceOrientation = true;
+    startDeviceOrientationListener();
   }
 }
 
 function updateTiltSmoothing() {
-  if (!STATE.tilt.active) return;
-  /* Normalize beta(front-back) → Z force, gamma(left-right) → X force */
-  const targetX = clamp(STATE.tilt.rawGamma / 35, -1, 1) * PHYSICS_TILT_FORCE;
-  const targetZ = clamp((STATE.tilt.rawBeta - 45) / 35, -1, 1) * PHYSICS_TILT_FORCE;
+  if (!STATE.useDeviceOrientation || !isMobileTiltTarget()) {
+    STATE.tilt.x += (0 - STATE.tilt.x) * 0.18;
+    STATE.tilt.z += (0 - STATE.tilt.z) * 0.18;
+    return;
+  }
+
+  const idleFor = Date.now() - (STATE.tilt.lastEventAt || 0);
+  if (!STATE.tilt.active || idleFor > ORIENTATION_IDLE_DECAY_MS) {
+    STATE.tilt.x += (0 - STATE.tilt.x) * 0.16;
+    STATE.tilt.z += (0 - STATE.tilt.z) * 0.16;
+    if (Math.abs(STATE.tilt.x) < 0.0001) STATE.tilt.x = 0;
+    if (Math.abs(STATE.tilt.z) < 0.0001) STATE.tilt.z = 0;
+    return;
+  }
+
+  const targetX = clamp(STATE.tilt.rawGamma / ORIENTATION_INPUT_RANGE_DEG, -1, 1) * PHYSICS_TILT_FORCE;
+  const targetZ = clamp((STATE.tilt.rawBeta) / ORIENTATION_INPUT_RANGE_DEG, -1, 1) * PHYSICS_TILT_FORCE;
   STATE.tilt.x += (targetX - STATE.tilt.x) * PHYSICS_TILT_SMOOTHING;
   STATE.tilt.z += (targetZ - STATE.tilt.z) * PHYSICS_TILT_SMOOTHING;
 }
 
 /* ═══ Physics System ═══ */
-function isRecentPhysicsLockedMemo(memo) {
-  if (!memo?.createdAt) return false;
-  const ageMs = Date.now() - new Date(memo.createdAt).getTime();
-  const ageHours = ageMs / (1000 * 60 * 60);
-  return ageHours < PHYSICS_AGE_RECENT_HOURS;
-}
-
 function getPhysicsFriction(memo) {
   if (!memo) return PHYSICS_FRICTION_MID;
   const ageMs = Date.now() - new Date(memo.createdAt).getTime();
@@ -5897,6 +6046,13 @@ function initVisualPhysics(visual) {
   };
 }
 
+function refreshAllVisualPhysics() {
+  STATE.visuals.forEach((visual) => {
+    if (visual.kind !== 'asset' || !visual.object) return;
+    initVisualPhysics(visual);
+  });
+}
+
 function updatePhysics(delta) {
   if (!STATE.physicsEnabled) return;
   updateTiltSmoothing();
@@ -5911,25 +6067,13 @@ function updatePhysics(delta) {
     if (visual.dropIntro) return;
 
     const p = visual.phys;
-    const memo = visual.memoIds?.length ? STATE.memos.find((m) => m.id === visual.memoIds[0]) : null;
-    p.friction = getPhysicsFriction(memo);
-
-    if (isRecentPhysicsLockedMemo(memo)) {
-      p.vx = 0;
-      p.vz = 0;
-      p.settled = true;
-      visual.object.position.x = p.restX;
-      visual.object.position.z = p.restZ;
-      visual.object.updateMatrixWorld(true);
-      return;
-    }
 
     /* Desk items don't respond to tilt as much */
-    const tiltScale = p.onDesk ? 0.15 : 1.0;
+    const tiltScale = p.onDesk ? 0.22 : 1.0;
 
     if (hasForce) {
-      p.vx += forceX * (1 - p.friction) * 3.0 * tiltScale;
-      p.vz += forceZ * (1 - p.friction) * 3.0 * tiltScale;
+      p.vx += forceX * (1 - p.friction) * 5.8 * tiltScale;
+      p.vz += forceZ * (1 - p.friction) * 5.8 * tiltScale;
       p.settled = false;
     }
 
@@ -6037,6 +6181,7 @@ function setupInteraction() {
 
   function onPointerDown(event) {
     if (event.button && event.button !== 0) return;
+    if (isMobileTiltTarget()) event.preventDefault();
     if (!UI.entryPanel.classList.contains('hidden') || !UI.historyPanel.classList.contains('hidden')) return;
 
     const gs = {
@@ -6160,9 +6305,10 @@ function setupInteraction() {
     }
 
     /* Apply throw velocity */
-    visual.phys.vx = clamp(throwVX, -PHYSICS_MAX_VELOCITY, PHYSICS_MAX_VELOCITY);
-    visual.phys.vz = clamp(throwVZ, -PHYSICS_MAX_VELOCITY, PHYSICS_MAX_VELOCITY);
+    visual.phys.vx = clamp(throwVX, -PHYSICS_MAX_VELOCITY, PHYSICS_MAX_VELOCITY) * PHYSICS_THROW_FRICTION;
+    visual.phys.vz = clamp(throwVZ, -PHYSICS_MAX_VELOCITY, PHYSICS_MAX_VELOCITY) * PHYSICS_THROW_FRICTION;
     visual.phys.settled = false;
+    visual.phys.friction = getPhysicsFriction(STATE.memos.find((m) => visual.memoIds?.includes(m.id)) || null);
 
     /* Update rest position to new dropped position */
     visual.phys.restX = visual.object.position.x;
@@ -6182,6 +6328,13 @@ function setupInteraction() {
     clearTimeout(STATE.longPressTimer);
     if (STATE.grabbedVisual && STATE.grabbedVisual.object && STATE.grabbedVisual.phys) {
       restObjectOnY(STATE.grabbedVisual.object, STATE.grabbedVisual.phys.onDesk ? (STATE.room.deskTopY || 1.28) : 0.02);
+      STATE.grabbedVisual.phys.restX = STATE.grabbedVisual.object.position.x;
+      STATE.grabbedVisual.phys.restZ = STATE.grabbedVisual.object.position.z;
+      const layoutKey = STATE.grabbedVisual.object?.userData?.layoutCacheKey;
+      if (layoutKey) {
+        syncLayoutCacheFromObject(layoutKey, STATE.grabbedVisual.object, STATE.grabbedVisual.object.userData.layoutCacheExtra || {});
+        persistStorage();
+      }
     }
     STATE.grabState = null;
     STATE.grabbedVisual = null;
