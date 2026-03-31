@@ -1849,3 +1849,89 @@ div {
 #memo-detail-delete {
   display: none !important;
 }
+
+
+/* === extra tighter spacing for new memo / history buttons === */
+.room-hud .room-actions-compact {
+  gap: 0 !important;
+}
+
+#new-memo-btn.compact-dock-btn {
+  margin-right: -10px !important;
+}
+
+#open-history-btn.compact-dock-btn {
+  margin-left: -10px !important;
+}
+
+@media (max-width: 768px) {
+  #new-memo-btn.compact-dock-btn {
+    margin-right: -8px !important;
+  }
+  #open-history-btn.compact-dock-btn {
+    margin-left: -8px !important;
+  }
+}
+
+@media (max-width: 640px) {
+  #new-memo-btn.compact-dock-btn {
+    margin-right: -6px !important;
+  }
+  #open-history-btn.compact-dock-btn {
+    margin-left: -6px !important;
+  }
+}
+
+/* ═══ Export / Import buttons ═══ */
+.backup-actions {
+  display: flex;
+  gap: 6px;
+  padding: 6px 0 2px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+}
+.backup-btn {
+  flex: 1;
+  min-height: 38px !important;
+  font-size: 0.8rem !important;
+  font-weight: 600;
+  color: var(--muted) !important;
+  background: rgba(255, 253, 250, 0.5) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-sm) !important;
+  transition: background 140ms ease, color 140ms ease, transform 140ms ease !important;
+}
+.backup-btn:hover {
+  background: rgba(255, 253, 250, 0.8) !important;
+  color: var(--foreground) !important;
+  transform: translateY(-1px) !important;
+}
+.backup-btn:active {
+  transform: translateY(1px) scale(0.98) !important;
+}
+
+/* ═══ Interaction feedback ═══ */
+.scene-root canvas {
+  touch-action: none;
+}
+
+.scene-root canvas[style*="grabbing"] {
+  cursor: grabbing !important;
+}
+
+/* --- mobile tilt / long-press stability --- */
+.scene-root,
+.scene-root canvas {
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .scene-root,
+  .scene-root canvas {
+    cursor: default;
+  }
+}
