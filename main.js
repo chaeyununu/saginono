@@ -1662,12 +1662,6 @@ init();
 async function init() {
   await openIDB();
   await loadStorage();
-  loadEasterState();
-  setupButtonSoundUI();
-  ensureEasterOverlayRoot();
-  const addedDummyMemoCount = ensureHeavyDummyMemos();
-  if (addedDummyMemoCount > 0) persistStorage();
-  seedPlayedEmotionRewardDropsFromExistingMemos();
   setupUI();
   renderCategoryChips();
   syncSelectionUI();
@@ -1678,10 +1672,25 @@ async function init() {
   renderHistory();
   setupDeviceOrientation();
   setupInteraction();
-  maybeTriggerReloadRa3();
   startLoop();
   STATE.appReady = true;
   hideLoadingOverlay();
+
+  /* Defer non-critical work to after first paint */
+  const deferredInit = () => {
+    loadEasterState();
+    setupButtonSoundUI();
+    ensureEasterOverlayRoot();
+    const addedDummyMemoCount = ensureHeavyDummyMemos();
+    if (addedDummyMemoCount > 0) persistStorage();
+    seedPlayedEmotionRewardDropsFromExistingMemos();
+    maybeTriggerReloadRa3();
+  };
+  if (typeof requestIdleCallback === 'function') {
+    requestIdleCallback(deferredInit, { timeout: 3000 });
+  } else {
+    setTimeout(deferredInit, 200);
+  }
 }
 
 
@@ -2301,12 +2310,14 @@ function setupScene() {
     STATE.camera.lookAt(-0.55, 1.35, -2.35);
   }
 
-  STATE.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-  STATE.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.8));
+  const isMobileDevice = isMobileTiltTarget() || width < 768;
+
+  STATE.renderer = new THREE.WebGLRenderer({ antialias: !isMobileDevice, alpha: false, powerPreference: 'high-performance' });
+  STATE.renderer.setPixelRatio(isMobileDevice ? Math.min(window.devicePixelRatio || 1, 1.0) : Math.min(window.devicePixelRatio || 1, 1.8));
   STATE.renderer.setSize(width, height);
   STATE.renderer.outputColorSpace = THREE.SRGBColorSpace;
   STATE.renderer.shadowMap.enabled = true;
-  STATE.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  STATE.renderer.shadowMap.type = isMobileDevice ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
   STATE.renderer.toneMappingExposure = 1.08;
   UI.sceneRoot.innerHTML = '';
   UI.sceneRoot.appendChild(STATE.renderer.domElement);
@@ -2314,23 +2325,26 @@ function setupScene() {
   const hemi = new THREE.HemisphereLight(0xfffbf4, 0xe9dfd3, 1.7);
   STATE.scene.add(hemi);
 
+  const shadowMapRes = isMobileDevice ? 1024 : 2048;
   const key = new THREE.DirectionalLight(0xffe2c6, 1.9);
   key.position.set(5.6, 9.5, 6.4);
   key.castShadow = true;
-  key.shadow.mapSize.set(2048, 2048);
-  key.shadow.camera.left = -14;
-  key.shadow.camera.right = 14;
-  key.shadow.camera.top = 12;
-  key.shadow.camera.bottom = -12;
+  key.shadow.mapSize.set(shadowMapRes, shadowMapRes);
+  key.shadow.camera.left = isMobileDevice ? -10 : -14;
+  key.shadow.camera.right = isMobileDevice ? 10 : 14;
+  key.shadow.camera.top = isMobileDevice ? 8 : 12;
+  key.shadow.camera.bottom = isMobileDevice ? -8 : -12;
   key.shadow.camera.near = 0.5;
-  key.shadow.camera.far = 40;
+  key.shadow.camera.far = isMobileDevice ? 28 : 40;
   STATE.scene.add(key);
 
-  const fill = new THREE.PointLight(0xfff0e0, 12, 30, 2.0);
-  fill.position.set(-6, 3.6, 1.5);
-  STATE.scene.add(fill);
+  if (!isMobileDevice) {
+    const fill = new THREE.PointLight(0xfff0e0, 12, 30, 2.0);
+    fill.position.set(-6, 3.6, 1.5);
+    STATE.scene.add(fill);
+  }
 
-  const backGlow = new THREE.PointLight(0xfff8ef, 8.5, 24, 2.0);
+  const backGlow = new THREE.PointLight(0xfff8ef, isMobileDevice ? 6 : 8.5, 24, 2.0);
   backGlow.position.set(1, 4.2, -5.2);
   STATE.scene.add(backGlow);
 
@@ -2391,19 +2405,27 @@ function buildRoomShell() {
 async function loadAssets() {
   const loader = new GLTFLoader();
 
-  STATE.templates.note = await loadTemplate(loader, 'note', ASSET_FILES.note, createNoteFallback);
-  STATE.templates.scribble = await loadTemplate(loader, 'scribble', ASSET_FILES.scribble, createScribbleFallback);
-  STATE.templates.clothesFolded = await loadTemplate(loader, 'clothesFolded', ASSET_FILES.clothesFolded, createClothesFoldedFallback);
-  STATE.templates.clothesScattered = await loadTemplate(loader, 'clothesScattered', ASSET_FILES.clothesScattered, createClothesScatteredFallback);
-  STATE.templates.paperSingle = await loadTemplate(loader, 'paperSingle', ASSET_FILES.paperSingle, () => createPaperFallback(0xe5dacb));
-  STATE.templates.paperSingle2 = await loadTemplate(loader, 'paperSingle2', ASSET_FILES.paperSingle2, () => createPaperFallback(0xd9d0e2));
-  STATE.templates.paperPile = await loadTemplate(loader, 'paperPile', ASSET_FILES.paperPile, createPaperPileFallback);
-  STATE.templates.snack = await loadTemplate(loader, 'snack', ASSET_FILES.snack, createSnackFallback);
-  STATE.templates.strawberry = await loadTemplate(loader, 'strawberry', ASSET_FILES.strawberry, createStrawberryFallback);
-  STATE.templates.jar = await loadTemplate(loader, 'jar', ASSET_FILES.jar, createJarFallback);
-  STATE.templates.burn = await loadTemplate(loader, 'burn', ASSET_FILES.burn, createBurnFallback);
-  STATE.templates.tumbler = await loadTemplate(loader, 'tumbler', ASSET_FILES.tumbler, createTumblerFallback);
-  STATE.templates.desk = await loadTemplate(loader, 'desk', ASSET_FILES.desk, createDeskFallback);
+  const assetDefs = [
+    ['note', ASSET_FILES.note, createNoteFallback],
+    ['scribble', ASSET_FILES.scribble, createScribbleFallback],
+    ['clothesFolded', ASSET_FILES.clothesFolded, createClothesFoldedFallback],
+    ['clothesScattered', ASSET_FILES.clothesScattered, createClothesScatteredFallback],
+    ['paperSingle', ASSET_FILES.paperSingle, () => createPaperFallback(0xe5dacb)],
+    ['paperSingle2', ASSET_FILES.paperSingle2, () => createPaperFallback(0xd9d0e2)],
+    ['paperPile', ASSET_FILES.paperPile, createPaperPileFallback],
+    ['snack', ASSET_FILES.snack, createSnackFallback],
+    ['strawberry', ASSET_FILES.strawberry, createStrawberryFallback],
+    ['jar', ASSET_FILES.jar, createJarFallback],
+    ['burn', ASSET_FILES.burn, createBurnFallback],
+    ['tumbler', ASSET_FILES.tumbler, createTumblerFallback],
+    ['desk', ASSET_FILES.desk, createDeskFallback],
+  ];
+
+  const results = await Promise.all(
+    assetDefs.map(([key, file, fb]) => loadTemplate(loader, key, file, fb))
+  );
+
+  assetDefs.forEach(([key], i) => { STATE.templates[key] = results[i]; });
 }
 
 async function loadTemplate(loader, key, filename, fallbackFactory) {
@@ -2446,9 +2468,10 @@ function normalizeTemplate(root, key) {
 }
 
 function applyShadowSettings(object) {
+  const isMobile = isMobileTiltTarget() || (window.innerWidth || 768) < 768;
   object.traverse((child) => {
     if (!child.isMesh) return;
-    child.castShadow = true;
+    child.castShadow = !isMobile; /* on mobile, only desk/floor receive shadows via buildDeskAndDecor */
     child.receiveShadow = true;
     if (child.material && !Array.isArray(child.material) && 'envMapIntensity' in child.material) {
       child.material.envMapIntensity = 1.1;
@@ -5489,7 +5512,23 @@ function hideMemoHover() {
 }
 
 function startLoop() {
-  const frame = () => {
+  const isMobile = isMobileTiltTarget() || (window.innerWidth || 768) < 768;
+  const targetInterval = isMobile ? 33.33 : 0; /* ~30fps on mobile, uncapped on desktop */
+  let lastFrameTime = 0;
+  let _needsRender = true;
+
+  /* Mark scene dirty on any interaction */
+  STATE._markDirty = () => { _needsRender = true; };
+
+  const frame = (timestamp) => {
+    requestAnimationFrame(frame);
+
+    if (isMobile && targetInterval > 0) {
+      const elapsed = timestamp - lastFrameTime;
+      if (elapsed < targetInterval) return;
+      lastFrameTime = timestamp - (elapsed % targetInterval);
+    }
+
     const delta = Math.min(STATE.clock.getDelta(), 0.033);
     const now = Date.now();
 
@@ -5535,7 +5574,6 @@ function startLoop() {
     }
 
     STATE.renderer.render(STATE.scene, STATE.camera);
-    requestAnimationFrame(frame);
   };
 
   requestAnimationFrame(frame);
@@ -6710,4 +6748,4 @@ function createTumblerFallback() {
   group.add(lid);
 
   return group;
-}v
+}
