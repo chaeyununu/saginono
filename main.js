@@ -14,15 +14,6 @@ const HEAVY_DUMMY_MEMO_COUNTS = Object.freeze({
   emotion: 20,
 });
 const NON_DESK_SCALE_MULTIPLIER = 2;
-const MOBILE_INITIAL_ASSET_TIMEOUT_MS = 2500;
-const MOBILE_DEFERRED_ASSET_TIMEOUT_MS = 4500;
-const MOBILE_DEFERRED_ASSET_KEYS = Object.freeze(['clothesScattered', 'paperPile', 'jar', 'burn']);
-const ASSET_TEMPLATE_ALIAS = Object.freeze({
-  clothesScattered: 'clothesFolded',
-  paperPile: 'paperSingle2',
-  jar: 'strawberry',
-  burn: 'snack',
-});
 
 /* ═══ Physics & Interaction Constants ═══ */
 const PHYSICS_FRICTION_RECENT = 0.96;
@@ -38,8 +29,6 @@ const PHYSICS_THROW_MULTIPLIER = 0.018;
 const PHYSICS_THROW_FRICTION = 0.92;
 const PHYSICS_BOUNCE_FACTOR = 0.3;
 const PHYSICS_ROOM_BOUNDS = { minX: -8.2, maxX: 8.8, minZ: -5.8, maxZ: 3.6 };
-const PHYSICS_SEPARATION_RADIUS = 1.2;
-const PHYSICS_SEPARATION_FORCE = 0.012;
 const LONG_PRESS_MS = 500;
 const DRAG_DEAD_ZONE = 6;
 const VELOCITY_HISTORY_SIZE = 6;
@@ -129,6 +118,25 @@ const ASSET_FILES = {
   burn: 'burn.glb',
   tumbler: 'tumbler.glb',
 };
+
+const MOBILE_CRITICAL_ASSET_KEYS = Object.freeze([
+  'desk',
+  'note',
+  'scribble',
+  'clothesFolded',
+  'paperSingle',
+  'paperSingle2',
+  'snack',
+  'strawberry',
+  'tumbler',
+]);
+
+const MOBILE_DEFERRED_ASSET_KEYS = Object.freeze([
+  'clothesScattered',
+  'paperPile',
+  'jar',
+  'burn',
+]);
 
 const TARGET_MAX_DIMENSION = {
   desk: 7.75,
@@ -1186,7 +1194,6 @@ const STATE = {
   scene: null,
   camera: null,
   renderer: null,
-  keyLight: null,
   clock: new THREE.Clock(),
   pointer: new THREE.Vector2(),
   pointerClient: { x: window.innerWidth * 0.5, y: window.innerHeight * 0.5 },
@@ -1196,8 +1203,6 @@ const STATE = {
   hoverDebouncePendingRoot: null,
   mixers: [],
   templates: {},
-  deferredAssetsStarted: false,
-  deferredAssetsReady: false,
   visuals: [],
   staticDecor: [],
   room: {
@@ -1276,20 +1281,6 @@ const EASTER_RA4_COOLDOWN_MS = 12 * 60 * 1000;
 
 function isDummyMemo(memo) {
   return typeof memo?.id === 'string' && memo.id.startsWith('dummy-');
-}
-
-function stripDummyMemosAndLayoutCache() {
-  const previousCount = STATE.memos.length;
-  STATE.memos = STATE.memos.filter((memo) => !isDummyMemo(memo));
-
-  const nextLayoutCache = Object.create(null);
-  Object.entries(STATE.layoutCache || {}).forEach(([key, entry]) => {
-    if (typeof key === 'string' && (key.includes('dummy-') || key === 'clutter-old:shared')) return;
-    nextLayoutCache[key] = entry;
-  });
-  STATE.layoutCache = nextLayoutCache;
-
-  return STATE.memos.length !== previousCount;
 }
 
 function loadEasterState() {
@@ -1661,26 +1652,42 @@ init();
 async function init() {
   await openIDB();
   await loadStorage();
-  const removedDummyMemoData = stripDummyMemosAndLayoutCache();
+  const removedDummyMemos = removePersistedDummyMemosIfNeeded();
   loadEasterState();
   setupButtonSoundUI();
   ensureEasterOverlayRoot();
-  if (removedDummyMemoData) persistStorage();
   seedPlayedEmotionRewardDropsFromExistingMemos();
   setupUI();
   renderCategoryChips();
   syncSelectionUI();
   setupScene();
-  await loadAssets();
-  buildDeskAndDecor();
-  rebuildVisuals();
-  renderHistory();
   setupDeviceOrientation();
   setupInteraction();
   maybeTriggerReloadRa3();
   startLoop();
   STATE.appReady = true;
+  UI.permissionModal.classList.remove('visible');
   hideLoadingOverlay();
+
+  if (removedDummyMemos) persistStorage();
+
+  const { critical, deferred } = getInitialAssetLoadPlan();
+  await loadAssetGroup(critical);
+  ensureDeferredTemplateAliases();
+  buildDeskAndDecor();
+  rebuildVisuals();
+  renderHistory();
+
+  if (deferred.length) {
+    loadAssetGroup(deferred)
+      .then(() => {
+        rebuildVisuals();
+        renderHistory();
+      })
+      .catch((error) => {
+        console.warn('Deferred asset load failed.', error);
+      });
+  }
 }
 
 function setupUI() {
@@ -1689,12 +1696,6 @@ function setupUI() {
     if (!ok) return;
     UI.permissionModal.classList.remove('visible');
     ensureRecognition();
-
-    if (!STATE.appReady) {
-      showLoadingOverlay('...');
-    } else {
-      hideLoadingOverlay();
-    }
   });
 
   UI.recordBtn.addEventListener('click', async () => {
@@ -2169,44 +2170,10 @@ function updateRoomCopy(memo) {
   }
 }
 
-
-function isMobileViewport(width = UI.sceneRoot?.clientWidth || window.innerWidth) {
-  return width < 768;
-}
-
-function getRendererPixelRatio(isMobile) {
-  return Math.min(window.devicePixelRatio || 1, isMobile ? 1 : 1.8);
-}
-
-function applyRendererPerformancePreset(renderer, isMobile) {
-  if (!renderer) return;
-  renderer.setPixelRatio(getRendererPixelRatio(isMobile));
-  renderer.shadowMap.type = isMobile ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
-}
-
-function applyKeyShadowPreset(light, isMobile) {
-  if (!light?.shadow) return;
-
-  const mapSize = isMobile ? 1024 : 2048;
-  light.shadow.mapSize.set(mapSize, mapSize);
-  light.shadow.camera.left = isMobile ? -10 : -14;
-  light.shadow.camera.right = isMobile ? 10 : 14;
-  light.shadow.camera.top = isMobile ? 8 : 12;
-  light.shadow.camera.bottom = isMobile ? -8 : -12;
-  light.shadow.camera.near = 0.5;
-  light.shadow.camera.far = isMobile ? 30 : 40;
-  light.shadow.camera.updateProjectionMatrix();
-
-  if (light.shadow.map) {
-    light.shadow.map.dispose();
-    light.shadow.map = null;
-  }
-}
-
 function setupScene() {
   const width = UI.sceneRoot.clientWidth || window.innerWidth;
   const height = UI.sceneRoot.clientHeight || window.innerHeight;
-  const isMobile = isMobileViewport(width);
+  const isMobile = width < 768;
 
   const roomColor = 0xf6f1eb;
 
@@ -2229,10 +2196,11 @@ function setupScene() {
     alpha: false,
     powerPreference: 'high-performance',
   });
+  STATE.renderer.setPixelRatio(isMobile ? 1 : Math.min(window.devicePixelRatio || 1, 1.8));
   STATE.renderer.setSize(width, height);
   STATE.renderer.outputColorSpace = THREE.SRGBColorSpace;
   STATE.renderer.shadowMap.enabled = true;
-  applyRendererPerformancePreset(STATE.renderer, isMobile);
+  STATE.renderer.shadowMap.type = isMobile ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
   STATE.renderer.toneMappingExposure = 1.08;
   UI.sceneRoot.innerHTML = '';
   UI.sceneRoot.appendChild(STATE.renderer.domElement);
@@ -2243,8 +2211,13 @@ function setupScene() {
   const key = new THREE.DirectionalLight(0xffe2c6, 1.9);
   key.position.set(5.6, 9.5, 6.4);
   key.castShadow = true;
-  applyKeyShadowPreset(key, isMobile);
-  STATE.keyLight = key;
+  key.shadow.mapSize.set(isMobile ? 1024 : 2048, isMobile ? 1024 : 2048);
+  key.shadow.camera.left = isMobile ? -10 : -14;
+  key.shadow.camera.right = isMobile ? 10 : 14;
+  key.shadow.camera.top = isMobile ? 8 : 12;
+  key.shadow.camera.bottom = isMobile ? -8 : -12;
+  key.shadow.camera.near = 0.5;
+  key.shadow.camera.far = 40;
   STATE.scene.add(key);
 
   const fill = new THREE.PointLight(0xfff0e0, 12, 30, 2.0);
@@ -2309,99 +2282,72 @@ function buildRoomShell() {
   group.add(wallGlow);
 }
 
-async function loadAssets() {
-  const loader = new GLTFLoader();
-  const assetJobs = [
-    ['note', ASSET_FILES.note, createNoteFallback],
-    ['scribble', ASSET_FILES.scribble, createScribbleFallback],
-    ['clothesFolded', ASSET_FILES.clothesFolded, createClothesFoldedFallback],
-    ['clothesScattered', ASSET_FILES.clothesScattered, createClothesScatteredFallback],
-    ['paperSingle', ASSET_FILES.paperSingle, () => createPaperFallback(0xe5dacb)],
-    ['paperSingle2', ASSET_FILES.paperSingle2, () => createPaperFallback(0xd9d0e2)],
-    ['paperPile', ASSET_FILES.paperPile, createPaperPileFallback],
-    ['snack', ASSET_FILES.snack, createSnackFallback],
-    ['strawberry', ASSET_FILES.strawberry, createStrawberryFallback],
-    ['jar', ASSET_FILES.jar, createJarFallback],
-    ['burn', ASSET_FILES.burn, createBurnFallback],
-    ['tumbler', ASSET_FILES.tumbler, createTumblerFallback],
-    ['desk', ASSET_FILES.desk, createDeskFallback],
-  ];
+function getInitialAssetLoadPlan() {
+  const width = window.innerWidth || UI.sceneRoot.clientWidth || 1024;
+  const isMobile = width < 768;
 
-  const isMobile = isMobileViewport();
-  const deferredKeys = isMobile ? new Set(MOBILE_DEFERRED_ASSET_KEYS) : new Set();
-  const initialJobs = assetJobs.filter(([key]) => !deferredKeys.has(key));
-  const deferredJobs = assetJobs.filter(([key]) => deferredKeys.has(key));
-
-  if (isMobile) {
-    const loadedTemplates = await Promise.all(
-      initialJobs.map(([key, filename, fallbackFactory]) => loadTemplate(loader, key, filename, fallbackFactory, {
-        timeoutMs: MOBILE_INITIAL_ASSET_TIMEOUT_MS,
-      }))
-    );
-
-    loadedTemplates.forEach((template, index) => {
-      const [key] = initialJobs[index];
-      STATE.templates[key] = template;
-    });
-
-    startDeferredAssetLoading(loader, deferredJobs);
-    return;
+  if (!isMobile) {
+    return {
+      critical: Object.keys(ASSET_FILES),
+      deferred: [],
+    };
   }
 
-  for (const [key, filename, fallbackFactory] of assetJobs) {
-    STATE.templates[key] = await loadTemplate(loader, key, filename, fallbackFactory);
-  }
-
-  STATE.deferredAssetsReady = true;
-}
-
-function startDeferredAssetLoading(loader, assetJobs) {
-  if (!assetJobs.length || STATE.deferredAssetsStarted) {
-    STATE.deferredAssetsReady = true;
-    return;
-  }
-
-  STATE.deferredAssetsStarted = true;
-
-  const start = async () => {
-    const loadedTemplates = await Promise.all(
-      assetJobs.map(([key, filename, fallbackFactory]) => loadTemplate(loader, key, filename, fallbackFactory, {
-        timeoutMs: MOBILE_DEFERRED_ASSET_TIMEOUT_MS,
-      }))
-    );
-
-    loadedTemplates.forEach((template, index) => {
-      const [key] = assetJobs[index];
-      STATE.templates[key] = template;
-    });
-
-    STATE.deferredAssetsReady = true;
-    STATE.pendingVisualRebuild = true;
+  return {
+    critical: [...MOBILE_CRITICAL_ASSET_KEYS],
+    deferred: [...MOBILE_DEFERRED_ASSET_KEYS],
   };
+}
 
-  if (typeof window.requestIdleCallback === 'function') {
-    window.requestIdleCallback(() => { void start(); }, { timeout: 1200 });
-  } else {
-    window.setTimeout(() => { void start(); }, 0);
+async function loadAssetGroup(keys) {
+  const loader = new GLTFLoader();
+  const uniqueKeys = [...new Set((keys || []).filter(Boolean))];
+
+  await Promise.all(uniqueKeys.map(async (key) => {
+    if (STATE.templates[key]) return;
+    STATE.templates[key] = await loadTemplate(loader, key, ASSET_FILES[key], getFallbackFactoryForKey(key));
+  }));
+}
+
+function getFallbackFactoryForKey(key) {
+  switch (key) {
+    case 'note': return createNoteFallback;
+    case 'scribble': return createScribbleFallback;
+    case 'clothesFolded': return createClothesFoldedFallback;
+    case 'clothesScattered': return createClothesScatteredFallback;
+    case 'paperSingle': return () => createPaperFallback(0xe5dacb);
+    case 'paperSingle2': return () => createPaperFallback(0xd9d0e2);
+    case 'paperPile': return createPaperPileFallback;
+    case 'snack': return createSnackFallback;
+    case 'strawberry': return createStrawberryFallback;
+    case 'jar': return createJarFallback;
+    case 'burn': return createBurnFallback;
+    case 'tumbler': return createTumblerFallback;
+    case 'desk': return createDeskFallback;
+    default: return () => new THREE.Group();
   }
 }
 
-function loadGLTFWithTimeout(loader, url, timeoutMs = 0) {
-  if (!timeoutMs || timeoutMs <= 0) return loader.loadAsync(url);
-
-  return Promise.race([
-    loader.loadAsync(url),
-    new Promise((_, reject) => {
-      window.setTimeout(() => reject(new Error(`Asset load timeout: ${url}`)), timeoutMs);
-    }),
-  ]);
+function ensureDeferredTemplateAliases() {
+  if (!STATE.templates.clothesScattered && STATE.templates.clothesFolded) {
+    STATE.templates.clothesScattered = STATE.templates.clothesFolded;
+  }
+  if (!STATE.templates.paperPile && (STATE.templates.paperSingle2 || STATE.templates.paperSingle)) {
+    STATE.templates.paperPile = STATE.templates.paperSingle2 || STATE.templates.paperSingle;
+  }
+  if (!STATE.templates.jar && (STATE.templates.strawberry || STATE.templates.snack)) {
+    STATE.templates.jar = STATE.templates.strawberry || STATE.templates.snack;
+  }
+  if (!STATE.templates.burn && STATE.templates.snack) {
+    STATE.templates.burn = STATE.templates.snack;
+  }
 }
 
-async function loadTemplate(loader, key, filename, fallbackFactory, { timeoutMs = 0 } = {}) {
+async function loadTemplate(loader, key, filename, fallbackFactory) {
   let root;
 
   try {
-    const gltf = await loadGLTFWithTimeout(loader, `./assets/${filename}`, timeoutMs);
+    const gltf = await loader.loadAsync(`./assets/${filename}`);
     root = gltf.scene;
     root.animations = gltf.animations || [];
   } catch (error) {
@@ -2999,21 +2945,7 @@ function buildStaticDecor() {
 }
 
 function createAssetInstance(key) {
-  let template = STATE.templates[key];
-  const aliasKey = ASSET_TEMPLATE_ALIAS[key];
-
-  if (!template && aliasKey && STATE.templates[aliasKey]) {
-    template = STATE.templates[aliasKey];
-  }
-
-  if (!template) {
-    const emergencyTemplate = STATE.templates.note || STATE.templates.paperSingle || STATE.templates.desk;
-    if (!emergencyTemplate) {
-      throw new Error(`Missing template for asset: ${key}`);
-    }
-    template = emergencyTemplate;
-  }
-
+  const template = STATE.templates[key];
   const root = template.animations.length ? cloneSkeleton(template.root) : template.root.clone(true);
   root.userData.assetKey = key;
   applyShadowSettings(root);
@@ -5572,19 +5504,13 @@ function onResize() {
   if (!STATE.camera || !STATE.renderer) return;
   const width = UI.sceneRoot.clientWidth || window.innerWidth;
   const height = UI.sceneRoot.clientHeight || window.innerHeight;
-  const isMobile = isMobileViewport(width);
+  const isMobile = width < 768;
   STATE.camera.fov = isMobile ? 54 : 43;
   STATE.camera.aspect = width / height;
   STATE.camera.updateProjectionMatrix();
   STATE.renderer.setSize(width, height);
-  applyRendererPerformancePreset(STATE.renderer, isMobile);
-  if (STATE.keyLight) applyKeyShadowPreset(STATE.keyLight, isMobile);
   if (isMobile) {
     STATE.camera.position.set(-0.2, 7.6, 14.5);
-    STATE.camera.lookAt(-0.2, 0.6, -2.2);
-  } else {
-    STATE.camera.position.set(-0.55, 5.1, 11.6);
-    STATE.camera.lookAt(-0.55, 1.35, -2.35);
   }
 }
 
@@ -5902,7 +5828,8 @@ async function loadStorage() {
     if (Array.isArray(parsed)) {
       STATE.memos = parsed
         .map((item) => sanitizeStoredMemo(item))
-        .filter(Boolean);
+        .filter(Boolean)
+        .filter((memo) => !isDummyMemo(memo));
       STATE.layoutCache = Object.create(null);
       return;
     }
@@ -5910,7 +5837,8 @@ async function loadStorage() {
     const memoList = Array.isArray(parsed?.memos) ? parsed.memos : [];
     STATE.memos = memoList
       .map((item) => sanitizeStoredMemo(item))
-      .filter(Boolean);
+      .filter(Boolean)
+      .filter((memo) => !isDummyMemo(memo));
     STATE.layoutCache = hydrateLayoutCache(parsed?.layoutCache);
   } catch (error) {
     console.warn('Failed to load storage.', error);
@@ -5948,7 +5876,7 @@ function importMemosJSON() {
       const text = await file.text();
       const parsed = JSON.parse(text);
       const memoList = Array.isArray(parsed?.memos) ? parsed.memos : Array.isArray(parsed) ? parsed : [];
-      const validMemos = memoList.map((item) => sanitizeStoredMemo(item)).filter((item) => item && !isDummyMemo(item));
+      const validMemos = memoList.map((item) => sanitizeStoredMemo(item)).filter(Boolean);
       if (!validMemos.length) { alert('유효한 메모가 없습니다.'); return; }
 
       const existingIds = new Set(STATE.memos.map((m) => m.id));
@@ -5981,28 +5909,48 @@ function importMemosJSON() {
 }
 
 /* ═══ Device Orientation (Tilt) ═══ */
-function setupDeviceOrientation() {
-  const handleOrientation = (event) => {
-    const beta = event.beta ?? 0;   /* front-back tilt: -180..180 */
-    const gamma = event.gamma ?? 0; /* left-right tilt: -90..90 */
-    STATE.tilt.rawBeta = beta;
-    STATE.tilt.rawGamma = gamma;
-    STATE.tilt.active = true;
-  };
+function handleDeviceOrientation(event) {
+  const beta = event.beta ?? 0;
+  const gamma = event.gamma ?? 0;
+  STATE.tilt.rawBeta = beta;
+  STATE.tilt.rawGamma = gamma;
+  STATE.tilt.active = true;
+}
 
-  if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-    /* iOS 13+ */
-    document.addEventListener('click', function iosOrientationPermission() {
-      DeviceOrientationEvent.requestPermission().then((response) => {
-        if (response === 'granted') {
-          window.addEventListener('deviceorientation', handleOrientation, { passive: true });
-        }
-      }).catch(() => {});
-      document.removeEventListener('click', iosOrientationPermission);
-    }, { once: true });
-  } else {
-    window.addEventListener('deviceorientation', handleOrientation, { passive: true });
+async function requestDeviceOrientationPermission() {
+  if (STATE.hasOrientationPermission) return true;
+
+  try {
+    if (typeof DeviceOrientationEvent === 'undefined') return false;
+
+    if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+      const response = await DeviceOrientationEvent.requestPermission();
+      if (response !== 'granted') return false;
+    }
+
+    window.addEventListener('deviceorientation', handleDeviceOrientation, { passive: true });
+    STATE.hasOrientationPermission = true;
+    return true;
+  } catch (error) {
+    console.warn('Orientation permission error:', error);
+    return false;
   }
+}
+
+function setupDeviceOrientation() {
+  if (typeof DeviceOrientationEvent === 'undefined') return;
+
+  if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+    const requestOnce = () => {
+      requestDeviceOrientationPermission();
+    };
+    UI.sceneRoot.addEventListener('pointerdown', requestOnce, { passive: true, once: true });
+    UI.sceneRoot.addEventListener('touchstart', requestOnce, { passive: true, once: true });
+    return;
+  }
+
+  window.addEventListener('deviceorientation', handleDeviceOrientation, { passive: true });
+  STATE.hasOrientationPermission = true;
 }
 
 function updateTiltSmoothing() {
@@ -6055,43 +6003,6 @@ function updatePhysics(delta) {
   const forceZ = STATE.tilt.z;
   const hasForce = Math.abs(forceX) > 0.0003 || Math.abs(forceZ) > 0.0003;
 
-  const activeVisuals = [];
-  STATE.visuals.forEach((visual) => {
-    if (visual.kind !== 'asset' || !visual.object || !visual.phys) return;
-    if (visual === STATE.grabbedVisual) return;
-    if (visual.dropIntro) return;
-    const memo = visual.memoIds?.length ? STATE.memos.find((m) => m.id === visual.memoIds[0]) : null;
-    if (isRecentPhysicsLockedMemo(memo)) return;
-    activeVisuals.push(visual);
-  });
-
-  const sepImpulses = new Map();
-  for (let i = 0; i < activeVisuals.length; i++) {
-    const a = activeVisuals[i];
-    if (!sepImpulses.has(a)) sepImpulses.set(a, { x: 0, z: 0 });
-
-    for (let j = i + 1; j < activeVisuals.length; j++) {
-      const b = activeVisuals[j];
-      if (!sepImpulses.has(b)) sepImpulses.set(b, { x: 0, z: 0 });
-
-      const dx = a.object.position.x - b.object.position.x;
-      const dz = a.object.position.z - b.object.position.z;
-      const dist = Math.sqrt(dx * dx + dz * dz);
-      if (dist < PHYSICS_SEPARATION_RADIUS && dist > 0.001) {
-        const overlap = (PHYSICS_SEPARATION_RADIUS - dist) / PHYSICS_SEPARATION_RADIUS;
-        const strength = overlap * overlap * PHYSICS_SEPARATION_FORCE;
-        const nx = dx / dist;
-        const nz = dz / dist;
-        const impA = sepImpulses.get(a);
-        const impB = sepImpulses.get(b);
-        impA.x += nx * strength;
-        impA.z += nz * strength;
-        impB.x -= nx * strength;
-        impB.z -= nz * strength;
-      }
-    }
-  }
-
   STATE.visuals.forEach((visual) => {
     if (visual.kind !== 'asset' || !visual.object || !visual.phys) return;
     if (visual === STATE.grabbedVisual) return;
@@ -6111,6 +6022,7 @@ function updatePhysics(delta) {
       return;
     }
 
+    /* Desk items don't respond to tilt as much */
     const tiltScale = p.onDesk ? 0.15 : 1.0;
 
     if (hasForce) {
@@ -6119,16 +6031,11 @@ function updatePhysics(delta) {
       p.settled = false;
     }
 
-    const sep = sepImpulses.get(visual);
-    if (sep && (Math.abs(sep.x) > 0.0001 || Math.abs(sep.z) > 0.0001)) {
-      p.vx += sep.x;
-      p.vz += sep.z;
-      p.settled = false;
-    }
-
+    /* Apply friction */
     p.vx *= p.friction;
     p.vz *= p.friction;
 
+    /* Clamp max velocity */
     const speed = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
     if (speed > PHYSICS_MAX_VELOCITY) {
       const scale = PHYSICS_MAX_VELOCITY / speed;
@@ -6136,8 +6043,10 @@ function updatePhysics(delta) {
       p.vz *= scale;
     }
 
+    /* If nearly stopped, settle */
     if (speed < PHYSICS_REST_THRESHOLD && !hasForce) {
       if (!p.settled) {
+        /* Gently return to rest position */
         const dx = p.restX - visual.object.position.x;
         const dz = p.restZ - visual.object.position.z;
         const returnDist = Math.sqrt(dx * dx + dz * dz);
@@ -6155,9 +6064,11 @@ function updatePhysics(delta) {
       return;
     }
 
+    /* Apply velocity */
     visual.object.position.x += p.vx;
     visual.object.position.z += p.vz;
 
+    /* Room bounds with bounce */
     const b = PHYSICS_ROOM_BOUNDS;
     if (visual.object.position.x < b.minX) { visual.object.position.x = b.minX; p.vx *= -PHYSICS_BOUNCE_FACTOR; }
     if (visual.object.position.x > b.maxX) { visual.object.position.x = b.maxX; p.vx *= -PHYSICS_BOUNCE_FACTOR; }
