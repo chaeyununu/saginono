@@ -14,6 +14,15 @@ const HEAVY_DUMMY_MEMO_COUNTS = Object.freeze({
   emotion: 20,
 });
 const NON_DESK_SCALE_MULTIPLIER = 2;
+const MOBILE_INITIAL_ASSET_TIMEOUT_MS = 2500;
+const MOBILE_DEFERRED_ASSET_TIMEOUT_MS = 4500;
+const MOBILE_DEFERRED_ASSET_KEYS = Object.freeze(['clothesScattered', 'paperPile', 'jar', 'burn']);
+const ASSET_TEMPLATE_ALIAS = Object.freeze({
+  clothesScattered: 'clothesFolded',
+  paperPile: 'paperSingle2',
+  jar: 'strawberry',
+  burn: 'snack',
+});
 
 /* ═══ Physics & Interaction Constants ═══ */
 const PHYSICS_FRICTION_RECENT = 0.96;
@@ -1187,6 +1196,8 @@ const STATE = {
   hoverDebouncePendingRoot: null,
   mixers: [],
   templates: {},
+  deferredAssetsStarted: false,
+  deferredAssetsReady: false,
   visuals: [],
   staticDecor: [],
   room: {
@@ -2316,28 +2327,81 @@ async function loadAssets() {
     ['desk', ASSET_FILES.desk, createDeskFallback],
   ];
 
-  if (isMobileViewport()) {
+  const isMobile = isMobileViewport();
+  const deferredKeys = isMobile ? new Set(MOBILE_DEFERRED_ASSET_KEYS) : new Set();
+  const initialJobs = assetJobs.filter(([key]) => !deferredKeys.has(key));
+  const deferredJobs = assetJobs.filter(([key]) => deferredKeys.has(key));
+
+  if (isMobile) {
     const loadedTemplates = await Promise.all(
-      assetJobs.map(([key, filename, fallbackFactory]) => loadTemplate(loader, key, filename, fallbackFactory))
+      initialJobs.map(([key, filename, fallbackFactory]) => loadTemplate(loader, key, filename, fallbackFactory, {
+        timeoutMs: MOBILE_INITIAL_ASSET_TIMEOUT_MS,
+      }))
     );
 
     loadedTemplates.forEach((template, index) => {
-      const [key] = assetJobs[index];
+      const [key] = initialJobs[index];
       STATE.templates[key] = template;
     });
+
+    startDeferredAssetLoading(loader, deferredJobs);
     return;
   }
 
   for (const [key, filename, fallbackFactory] of assetJobs) {
     STATE.templates[key] = await loadTemplate(loader, key, filename, fallbackFactory);
   }
+
+  STATE.deferredAssetsReady = true;
 }
 
-async function loadTemplate(loader, key, filename, fallbackFactory) {
+function startDeferredAssetLoading(loader, assetJobs) {
+  if (!assetJobs.length || STATE.deferredAssetsStarted) {
+    STATE.deferredAssetsReady = true;
+    return;
+  }
+
+  STATE.deferredAssetsStarted = true;
+
+  const start = async () => {
+    const loadedTemplates = await Promise.all(
+      assetJobs.map(([key, filename, fallbackFactory]) => loadTemplate(loader, key, filename, fallbackFactory, {
+        timeoutMs: MOBILE_DEFERRED_ASSET_TIMEOUT_MS,
+      }))
+    );
+
+    loadedTemplates.forEach((template, index) => {
+      const [key] = assetJobs[index];
+      STATE.templates[key] = template;
+    });
+
+    STATE.deferredAssetsReady = true;
+    STATE.pendingVisualRebuild = true;
+  };
+
+  if (typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(() => { void start(); }, { timeout: 1200 });
+  } else {
+    window.setTimeout(() => { void start(); }, 0);
+  }
+}
+
+function loadGLTFWithTimeout(loader, url, timeoutMs = 0) {
+  if (!timeoutMs || timeoutMs <= 0) return loader.loadAsync(url);
+
+  return Promise.race([
+    loader.loadAsync(url),
+    new Promise((_, reject) => {
+      window.setTimeout(() => reject(new Error(`Asset load timeout: ${url}`)), timeoutMs);
+    }),
+  ]);
+}
+
+async function loadTemplate(loader, key, filename, fallbackFactory, { timeoutMs = 0 } = {}) {
   let root;
 
   try {
-    const gltf = await loader.loadAsync(`./assets/${filename}`);
+    const gltf = await loadGLTFWithTimeout(loader, `./assets/${filename}`, timeoutMs);
     root = gltf.scene;
     root.animations = gltf.animations || [];
   } catch (error) {
@@ -2935,7 +2999,21 @@ function buildStaticDecor() {
 }
 
 function createAssetInstance(key) {
-  const template = STATE.templates[key];
+  let template = STATE.templates[key];
+  const aliasKey = ASSET_TEMPLATE_ALIAS[key];
+
+  if (!template && aliasKey && STATE.templates[aliasKey]) {
+    template = STATE.templates[aliasKey];
+  }
+
+  if (!template) {
+    const emergencyTemplate = STATE.templates.note || STATE.templates.paperSingle || STATE.templates.desk;
+    if (!emergencyTemplate) {
+      throw new Error(`Missing template for asset: ${key}`);
+    }
+    template = emergencyTemplate;
+  }
+
   const root = template.animations.length ? cloneSkeleton(template.root) : template.root.clone(true);
   root.userData.assetKey = key;
   applyShadowSettings(root);
