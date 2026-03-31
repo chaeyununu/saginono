@@ -1935,3 +1935,23 @@ div {
     cursor: default;
   }
 }
+/* ═══ Mobile performance overrides ═══ */
+@media (max-width: 768px), (hover: none) and (pointer: coarse) {
+  .ambient-glow {
+    display: none;
+  }
+
+  .noise-layer {
+    opacity: 0.012;
+  }
+
+  .glass-panel,
+  .modal-backdrop {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  .modal-backdrop {
+    background: rgba(30, 25, 18, 0.14);
+  }
+}
