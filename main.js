@@ -1209,6 +1209,8 @@ const STATE = {
   pendingVisualRebuild: false,
   appReady: false,
   loadingOverlay: null,
+  hasOrientationPermission: false,
+  useDeviceOrientation: false,
   playedEmotionRewardDropMemoIds: new Set(),
   layoutCache: Object.create(null),
   easter: {
@@ -1603,11 +1605,19 @@ function setupButtonSoundUI() {
     && button.getAttribute('aria-disabled') !== 'true'
   );
 
+  const shouldPlaySound = (button) => {
+    // Don't play click sounds during active recording
+    if (STATE.isListening || STATE.keepRecognitionAlive) return false;
+    // Don't play for the record button itself (mic interaction clash)
+    if (button && button.id === 'record-btn') return false;
+    return true;
+  };
+
   document.addEventListener('pointerdown', (event) => {
     const button = event.target instanceof Element ? event.target.closest(BUTTON_SOUND_SELECTOR) : null;
     if (!isValidButtonTarget(button)) return;
     markButtonPress(button);
-    playButtonClickSound();
+    if (shouldPlaySound(button)) playButtonClickSound();
   }, true);
 
   document.addEventListener('keydown', (event) => {
@@ -1615,7 +1625,7 @@ function setupButtonSoundUI() {
     const button = event.target instanceof Element ? event.target.closest(BUTTON_SOUND_SELECTOR) : null;
     if (!isValidButtonTarget(button)) return;
     markButtonPress(button);
-    playButtonClickSound();
+    if (shouldPlaySound(button)) playButtonClickSound();
   }, true);
 
   ['pointerup', 'pointercancel', 'dragend', 'keyup', 'blur'].forEach((eventName) => {
@@ -1654,6 +1664,7 @@ function setupUI() {
   UI.allowMic.addEventListener('click', async () => {
     const ok = await requestMicrophonePermission();
     if (!ok) return;
+    await requestOrientationPermission();
     UI.permissionModal.classList.remove('visible');
     ensureRecognition();
 
@@ -1950,6 +1961,64 @@ async function requestMicrophonePermission() {
   }
 }
 
+async function requestOrientationPermission() {
+  if (STATE.hasOrientationPermission) return true;
+
+  // iOS 13+ Safari requires explicit permission request
+  if (typeof DeviceOrientationEvent !== 'undefined'
+    && typeof DeviceOrientationEvent.requestPermission === 'function') {
+    try {
+      const result = await DeviceOrientationEvent.requestPermission();
+      if (result === 'granted') {
+        STATE.hasOrientationPermission = true;
+        STATE.useDeviceOrientation = true;
+        startDeviceOrientationListener();
+        return true;
+      }
+      console.warn('Device orientation permission denied');
+      return false;
+    } catch (error) {
+      console.warn('Device orientation permission error:', error);
+      return false;
+    }
+  }
+
+  // Android / non-Safari: no permission needed, just listen
+  if (window.DeviceOrientationEvent) {
+    STATE.hasOrientationPermission = true;
+    STATE.useDeviceOrientation = true;
+    startDeviceOrientationListener();
+    return true;
+  }
+
+  return false;
+}
+
+function startDeviceOrientationListener() {
+  let initialBeta = null;
+  let initialGamma = null;
+
+  window.addEventListener('deviceorientation', (event) => {
+    if (!STATE.useDeviceOrientation) return;
+    if (event.beta === null || event.gamma === null) return;
+
+    // Capture rest position on first valid reading
+    if (initialBeta === null) {
+      initialBeta = event.beta;
+      initialGamma = event.gamma;
+    }
+
+    // gamma: left/right tilt (-90..90), beta: front/back tilt (-180..180)
+    const deltaGamma = event.gamma - initialGamma;
+    const deltaBeta = event.beta - initialBeta;
+
+    // Map tilt to pointer range (-1..1) with a comfortable 20-degree range
+    const tiltRange = 20;
+    STATE.pointer.x = Math.max(-1, Math.min(1, deltaGamma / tiltRange));
+    STATE.pointer.y = Math.max(-1, Math.min(1, -deltaBeta / tiltRange));
+  }, { passive: true });
+}
+
 function ensureRecognition() {
   if (STATE.recognition) return;
 
@@ -2170,11 +2239,11 @@ function setupScene() {
   STATE.scene.background = new THREE.Color(roomColor);
   STATE.scene.fog = new THREE.FogExp2(roomColor, 0.0018);
 
-  const fov = isMobile ? 54 : 43;
+  const fov = isMobile ? 58 : 43;
   STATE.camera = new THREE.PerspectiveCamera(fov, width / height, 0.1, 100);
   if (isMobile) {
-    STATE.camera.position.set(-0.2, 7.6, 14.5);
-    STATE.camera.lookAt(-0.2, 0.6, -2.2);
+    STATE.camera.position.set(-0.2, 6.8, 12.5);
+    STATE.camera.lookAt(-0.2, 0.8, -2.2);
   } else {
     STATE.camera.position.set(-0.55, 5.1, 11.6);
     STATE.camera.lookAt(-0.55, 1.35, -2.35);
@@ -2270,19 +2339,29 @@ function buildRoomShell() {
 async function loadAssets() {
   const loader = new GLTFLoader();
 
-  STATE.templates.note = await loadTemplate(loader, 'note', ASSET_FILES.note, createNoteFallback);
-  STATE.templates.scribble = await loadTemplate(loader, 'scribble', ASSET_FILES.scribble, createScribbleFallback);
-  STATE.templates.clothesFolded = await loadTemplate(loader, 'clothesFolded', ASSET_FILES.clothesFolded, createClothesFoldedFallback);
-  STATE.templates.clothesScattered = await loadTemplate(loader, 'clothesScattered', ASSET_FILES.clothesScattered, createClothesScatteredFallback);
-  STATE.templates.paperSingle = await loadTemplate(loader, 'paperSingle', ASSET_FILES.paperSingle, () => createPaperFallback(0xe5dacb));
-  STATE.templates.paperSingle2 = await loadTemplate(loader, 'paperSingle2', ASSET_FILES.paperSingle2, () => createPaperFallback(0xd9d0e2));
-  STATE.templates.paperPile = await loadTemplate(loader, 'paperPile', ASSET_FILES.paperPile, createPaperPileFallback);
-  STATE.templates.snack = await loadTemplate(loader, 'snack', ASSET_FILES.snack, createSnackFallback);
-  STATE.templates.strawberry = await loadTemplate(loader, 'strawberry', ASSET_FILES.strawberry, createStrawberryFallback);
-  STATE.templates.jar = await loadTemplate(loader, 'jar', ASSET_FILES.jar, createJarFallback);
-  STATE.templates.burn = await loadTemplate(loader, 'burn', ASSET_FILES.burn, createBurnFallback);
-  STATE.templates.tumbler = await loadTemplate(loader, 'tumbler', ASSET_FILES.tumbler, createTumblerFallback);
-  STATE.templates.desk = await loadTemplate(loader, 'desk', ASSET_FILES.desk, createDeskFallback);
+  const entries = [
+    ['note', ASSET_FILES.note, createNoteFallback],
+    ['scribble', ASSET_FILES.scribble, createScribbleFallback],
+    ['clothesFolded', ASSET_FILES.clothesFolded, createClothesFoldedFallback],
+    ['clothesScattered', ASSET_FILES.clothesScattered, createClothesScatteredFallback],
+    ['paperSingle', ASSET_FILES.paperSingle, () => createPaperFallback(0xe5dacb)],
+    ['paperSingle2', ASSET_FILES.paperSingle2, () => createPaperFallback(0xd9d0e2)],
+    ['paperPile', ASSET_FILES.paperPile, createPaperPileFallback],
+    ['snack', ASSET_FILES.snack, createSnackFallback],
+    ['strawberry', ASSET_FILES.strawberry, createStrawberryFallback],
+    ['jar', ASSET_FILES.jar, createJarFallback],
+    ['burn', ASSET_FILES.burn, createBurnFallback],
+    ['tumbler', ASSET_FILES.tumbler, createTumblerFallback],
+    ['desk', ASSET_FILES.desk, createDeskFallback],
+  ];
+
+  const results = await Promise.all(
+    entries.map(([key, file, fallback]) => loadTemplate(loader, key, file, fallback))
+  );
+
+  results.forEach((template) => {
+    STATE.templates[template.key] = template;
+  });
 }
 
 async function loadTemplate(loader, key, filename, fallbackFactory) {
@@ -5415,10 +5494,10 @@ function updateCamera(delta) {
   const isMobile = (window.innerWidth || 768) < 768;
   if (isMobile) {
     const baseX = -0.2;
-    const baseY = 7.6;
-    STATE.camera.position.x = THREE.MathUtils.lerp(STATE.camera.position.x, baseX + STATE.pointer.x * 0.1, delta * 1.2);
-    STATE.camera.position.y = THREE.MathUtils.lerp(STATE.camera.position.y, baseY + STATE.pointer.y * 0.05, delta * 1.2);
-    STATE.camera.lookAt(-0.2, 0.6, -2.2);
+    const baseY = 6.8;
+    STATE.camera.position.x = THREE.MathUtils.lerp(STATE.camera.position.x, baseX + STATE.pointer.x * 0.35, delta * 1.2);
+    STATE.camera.position.y = THREE.MathUtils.lerp(STATE.camera.position.y, baseY + STATE.pointer.y * 0.18, delta * 1.2);
+    STATE.camera.lookAt(-0.2, 0.8, -2.2);
   } else {
     const targetX = -0.55 + STATE.pointer.x * 0.22;
     const targetY = 5.1 + STATE.pointer.y * 0.12;
@@ -5433,17 +5512,19 @@ function onResize() {
   const width = UI.sceneRoot.clientWidth || window.innerWidth;
   const height = UI.sceneRoot.clientHeight || window.innerHeight;
   const isMobile = width < 768;
-  STATE.camera.fov = isMobile ? 54 : 43;
+  STATE.camera.fov = isMobile ? 58 : 43;
   STATE.camera.aspect = width / height;
   STATE.camera.updateProjectionMatrix();
   STATE.renderer.setSize(width, height);
   if (isMobile) {
-    STATE.camera.position.set(-0.2, 7.6, 14.5);
+    STATE.camera.position.set(-0.2, 6.8, 12.5);
   }
 }
 
 function onPointerMove(event) {
   if (!STATE.renderer) return;
+  // When device tilt is active, don't let pointer events override the tilt-driven values
+  if (STATE.useDeviceOrientation) return;
   const rect = STATE.renderer.domElement.getBoundingClientRect();
   STATE.pointer.x = ((((event.clientX - rect.left) / rect.width) * 2) - 1) * 0.9;
   STATE.pointer.y = ((-((event.clientY - rect.top) / rect.height) * 2) + 1) * 0.9;
@@ -6112,4 +6193,3 @@ function createTumblerFallback() {
 
   return group;
 }
-c
