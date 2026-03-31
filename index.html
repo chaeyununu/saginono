@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mind Room Memo</title>
+  <meta name="description" content="Voice-first room memo app with Three.js" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Gowun+Dodum&family=Inter:wght@400;500;600;700;800&family=Pretendard:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./style.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.163.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.163.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <div id="scene-root" class="scene-root"></div>
+    <div class="noise-layer"></div>
+    <div class="ambient-glow ambient-glow-a"></div>
+    <div class="ambient-glow ambient-glow-b"></div>
+
+    <div id="permission-modal" class="modal-backdrop visible" aria-modal="true" role="dialog">
+      <div class="modal-panel glass-panel">
+        <div class="modal-copy">
+          <h1>마이크와 기울기를 사용할게요?</h1>
+        </div>
+        <div class="modal-actions">
+          <button id="allow-mic" class="primary-btn">권한 허용</button>
+        </div>
+      </div>
+    </div>
+
+    <section id="entry-panel" class="entry-panel glass-panel hidden" aria-label="새 메모 입력 패널">
+      <button id="close-entry-btn" class="icon-close-btn" type="button" aria-label="새 메모 닫기">×</button>
+
+      <div id="category-grid" class="chip-grid compact-chip-grid" aria-label="메모 범주"></div>
+
+
+      <div id="emotion-tone-wrap" class="micro-tone-wrap hidden">
+        <div class="chip-grid micro-tone-grid">
+          <button type="button" class="chip tone-chip micro-chip" data-tone="good">good</button>
+          <button type="button" class="chip tone-chip micro-chip" data-tone="bad">bad</button>
+        </div>
+      </div>
+
+      <button id="record-btn" class="primary-btn compact-record-btn" disabled>말하기</button>
+
+      <div class="transcript-box compact-transcript-box">
+        <p id="transcript-text" class="transcript-text compact-transcript-text">...</p>
+      </div>
+
+      <div id="mic-badge" class="mic-badge idle" aria-hidden="true">대기 중</div>
+      <p id="selection-copy" class="selection-copy" aria-hidden="true"></p>
+    </section>
+
+    <section id="room-hud" class="room-hud" aria-label="빠른 메모 메뉴">
+      <div class="room-actions room-actions-compact">
+        <button id="new-memo-btn" class="ghost-btn compact-dock-btn">새 메모</button>
+        <button id="open-history-btn" class="primary-btn compact-btn compact-dock-btn">메모 보기</button>
+      </div>
+    </section>
+
+    <aside id="history-panel" class="history-panel glass-panel hidden" aria-label="메모 기록 패널">
+      <div class="history-head minimal-panel-head">
+        <button id="close-history-btn" class="icon-close-btn" type="button" aria-label="메모 보기 닫기">×</button>
+      </div>
+      <div id="history-list" class="history-list"></div>
+    </aside>
+  </div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
