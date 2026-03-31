@@ -21,14 +21,16 @@ const PHYSICS_FRICTION_OLD = 0.78;
 const PHYSICS_FRICTION_MID = 0.88;
 const PHYSICS_AGE_RECENT_HOURS = 72;
 const PHYSICS_AGE_OLD_DAYS = 3;
-const PHYSICS_TILT_FORCE = 0.035;
-const PHYSICS_TILT_SMOOTHING = 0.08;
+const PHYSICS_TILT_FORCE = 0.044;
+const PHYSICS_TILT_SMOOTHING = 0.22;
 const PHYSICS_REST_THRESHOLD = 0.0008;
 const PHYSICS_MAX_VELOCITY = 0.35;
 const PHYSICS_THROW_MULTIPLIER = 0.018;
 const PHYSICS_THROW_FRICTION = 0.92;
 const PHYSICS_BOUNCE_FACTOR = 0.3;
-const PHYSICS_ROOM_BOUNDS = { minX: -8.2, maxX: 8.8, minZ: -5.8, maxZ: 3.6 };
+const PHYSICS_ROOM_BOUNDS = { minX: -8.5, maxX: 8.5, minZ: -5.8, maxZ: 5.4 };
+const PHYSICS_SEPARATION_RADIUS = 1.2;
+const PHYSICS_SEPARATION_FORCE = 0.012;
 const LONG_PRESS_MS = 500;
 const DRAG_DEAD_ZONE = 6;
 const VELOCITY_HISTORY_SIZE = 6;
@@ -5858,8 +5860,10 @@ function setupDeviceOrientation() {
 function updateTiltSmoothing() {
   if (!STATE.tilt.active) return;
   /* Normalize beta(front-back) → Z force, gamma(left-right) → X force */
-  const targetX = clamp(STATE.tilt.rawGamma / 35, -1, 1) * PHYSICS_TILT_FORCE;
-  const targetZ = clamp((STATE.tilt.rawBeta - 45) / 35, -1, 1) * PHYSICS_TILT_FORCE;
+  /* Use symmetric gamma mapping for balanced left-right movement */
+  const rawGamma = STATE.tilt.rawGamma;
+  const targetX = clamp(rawGamma / 30, -1, 1) * PHYSICS_TILT_FORCE;
+  const targetZ = clamp((STATE.tilt.rawBeta - 45) / 30, -1, 1) * PHYSICS_TILT_FORCE;
   STATE.tilt.x += (targetX - STATE.tilt.x) * PHYSICS_TILT_SMOOTHING;
   STATE.tilt.z += (targetZ - STATE.tilt.z) * PHYSICS_TILT_SMOOTHING;
 }
@@ -5905,6 +5909,43 @@ function updatePhysics(delta) {
   const forceZ = STATE.tilt.z;
   const hasForce = Math.abs(forceX) > 0.0003 || Math.abs(forceZ) > 0.0003;
 
+  /* ── Pre-compute separation forces between all active (non-locked) GLBs ── */
+  const activeVisuals = [];
+  STATE.visuals.forEach((visual) => {
+    if (visual.kind !== 'asset' || !visual.object || !visual.phys) return;
+    if (visual === STATE.grabbedVisual) return;
+    if (visual.dropIntro) return;
+    const memo = visual.memoIds?.length ? STATE.memos.find((m) => m.id === visual.memoIds[0]) : null;
+    if (isRecentPhysicsLockedMemo(memo)) return;
+    activeVisuals.push(visual);
+  });
+
+  /* Accumulate separation impulses */
+  const sepImpulses = new Map();
+  for (let i = 0; i < activeVisuals.length; i++) {
+    const a = activeVisuals[i];
+    if (!sepImpulses.has(a)) sepImpulses.set(a, { x: 0, z: 0 });
+    for (let j = i + 1; j < activeVisuals.length; j++) {
+      const b = activeVisuals[j];
+      if (!sepImpulses.has(b)) sepImpulses.set(b, { x: 0, z: 0 });
+      const dx = a.object.position.x - b.object.position.x;
+      const dz = a.object.position.z - b.object.position.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist < PHYSICS_SEPARATION_RADIUS && dist > 0.001) {
+        const overlap = (PHYSICS_SEPARATION_RADIUS - dist) / PHYSICS_SEPARATION_RADIUS;
+        const strength = overlap * overlap * PHYSICS_SEPARATION_FORCE;
+        const nx = dx / dist;
+        const nz = dz / dist;
+        const impA = sepImpulses.get(a);
+        const impB = sepImpulses.get(b);
+        impA.x += nx * strength;
+        impA.z += nz * strength;
+        impB.x -= nx * strength;
+        impB.z -= nz * strength;
+      }
+    }
+  }
+
   STATE.visuals.forEach((visual) => {
     if (visual.kind !== 'asset' || !visual.object || !visual.phys) return;
     if (visual === STATE.grabbedVisual) return;
@@ -5930,6 +5971,14 @@ function updatePhysics(delta) {
     if (hasForce) {
       p.vx += forceX * (1 - p.friction) * 3.0 * tiltScale;
       p.vz += forceZ * (1 - p.friction) * 3.0 * tiltScale;
+      p.settled = false;
+    }
+
+    /* Apply separation impulse */
+    const sep = sepImpulses.get(visual);
+    if (sep && (Math.abs(sep.x) > 0.0001 || Math.abs(sep.z) > 0.0001)) {
+      p.vx += sep.x;
+      p.vz += sep.z;
       p.settled = false;
     }
 
