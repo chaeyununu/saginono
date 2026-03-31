@@ -1935,3 +1935,104 @@ div {
     cursor: default;
   }
 }
+
+/* ═══════════════════════════════════════════════ */
+/* === MOBILE PERFORMANCE OPTIMIZATIONS 2026-04 === */
+/* ═══════════════════════════════════════════════ */
+
+/* Remove invisible noise layer from render tree entirely */
+.noise-layer {
+  display: none !important;
+}
+
+/* Reduce expensive blur filters on mobile */
+@media (hover: none) and (pointer: coarse) {
+  .ambient-glow {
+    display: none !important;
+  }
+
+  .glass-panel,
+  .entry-panel,
+  .history-panel,
+  .modal-panel,
+  .modal-backdrop,
+  .room-summary,
+  .memo-detail-panel,
+  .memo-hover-card {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  #permission-modal {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  /* Promote composited layers for smooth transforms */
+  .chip,
+  .primary-btn,
+  .ghost-btn,
+  .detail-btn,
+  .tone-chip,
+  .micro-chip,
+  .icon-close-btn,
+  .compact-dock-btn {
+    will-change: transform;
+    -webkit-transform: translateZ(0);
+    transform: translateZ(0);
+  }
+
+  /* Reduce transition complexity */
+  .chip,
+  .primary-btn,
+  .ghost-btn,
+  .log-btn,
+  .detail-btn,
+  .tone-chip,
+  .micro-chip,
+  .icon-close-btn {
+    transition-duration: 120ms !important;
+  }
+
+  /* Disable hover effects entirely on touch (saves repaint) */
+  .chip:hover,
+  .primary-btn:hover,
+  .ghost-btn:hover,
+  .detail-btn:hover,
+  .tone-chip:hover,
+  .micro-chip:hover,
+  .icon-close-btn:hover,
+  .log-btn:hover,
+  #emotion-tone-wrap .tone-chip:hover,
+  #emotion-tone-wrap .micro-chip:hover,
+  .history-panel .log-actions .log-btn:hover {
+    transform: none !important;
+    filter: none !important;
+  }
+
+  /* Simplify panel backgrounds - remove gradients */
+  .entry-panel,
+  .history-panel {
+    background: rgba(255, 249, 238, 0.82) !important;
+  }
+
+  /* Reduce box-shadow complexity */
+  .log-card,
+  .empty-card {
+    box-shadow: none !important;
+  }
+}
+
+/* Reduce paint area on small screens */
+@media (max-width: 640px) {
+  .memo-detail-panel {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
+/* Content-visibility for off-screen history items */
+.history-list .log-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
+}
