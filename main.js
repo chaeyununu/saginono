@@ -16,18 +16,18 @@ const HEAVY_DUMMY_MEMO_COUNTS = Object.freeze({
 const NON_DESK_SCALE_MULTIPLIER = 2;
 
 /* ═══ Physics & Interaction Constants ═══ */
-const PHYSICS_FRICTION_RECENT = 0.96;
-const PHYSICS_FRICTION_OLD = 0.78;
-const PHYSICS_FRICTION_MID = 0.88;
-const PHYSICS_AGE_RECENT_HOURS = 6;
+const PHYSICS_FRICTION_RECENT = 0.9945;
+const PHYSICS_FRICTION_OLD = 0.7;
+const PHYSICS_FRICTION_MID = 0.84;
+const PHYSICS_AGE_RECENT_HOURS = 72;
 const PHYSICS_AGE_OLD_DAYS = 3;
-const PHYSICS_TILT_FORCE = 0.035;
-const PHYSICS_TILT_SMOOTHING = 0.08;
-const PHYSICS_REST_THRESHOLD = 0.0008;
-const PHYSICS_MAX_VELOCITY = 0.35;
-const PHYSICS_THROW_MULTIPLIER = 0.018;
-const PHYSICS_THROW_FRICTION = 0.92;
-const PHYSICS_BOUNCE_FACTOR = 0.3;
+const PHYSICS_TILT_FORCE = 0.11;
+const PHYSICS_TILT_SMOOTHING = 0.24;
+const PHYSICS_REST_THRESHOLD = 0.0012;
+const PHYSICS_MAX_VELOCITY = 0.92;
+const PHYSICS_THROW_MULTIPLIER = 0.032;
+const PHYSICS_THROW_FRICTION = 0.97;
+const PHYSICS_BOUNCE_FACTOR = 0.38;
 const PHYSICS_ROOM_BOUNDS = { minX: -8.2, maxX: 8.8, minZ: -5.8, maxZ: 3.6 };
 const LONG_PRESS_MS = 500;
 const DRAG_DEAD_ZONE = 6;
@@ -1737,6 +1737,13 @@ function startDeviceOrientationListener() {
   return true;
 }
 
+function waitForMicPermissionSoft(timeoutMs = 2200) {
+  return Promise.race([
+    requestMicrophonePermission(),
+    new Promise((resolve) => window.setTimeout(() => resolve(false), timeoutMs)),
+  ]);
+}
+
 async function requestOrientationPermission() {
   if (!isMobileTiltTarget()) {
     STATE.useDeviceOrientation = false;
@@ -1772,20 +1779,26 @@ async function requestOrientationPermission() {
 
 function setupUI() {
   UI.allowMic.addEventListener('click', async () => {
-    if (isMobileTiltTarget()) {
-      await requestOrientationPermission();
-    }
-
-    const ok = await requestMicrophonePermission();
-    if (!ok) return;
-    UI.permissionModal.classList.remove('visible');
-    ensureRecognition();
+    UI.allowMic.disabled = true;
 
     if (!STATE.appReady) {
       showLoadingOverlay('...');
     } else {
       hideLoadingOverlay();
     }
+
+    UI.permissionModal.classList.remove('visible');
+
+    const [micOk] = await Promise.all([
+      waitForMicPermissionSoft(),
+      isMobileTiltTarget() ? requestOrientationPermission() : Promise.resolve(false),
+    ]);
+
+    if (micOk) {
+      ensureRecognition();
+    }
+
+    UI.allowMic.disabled = false;
   });
 
   UI.recordBtn.addEventListener('click', async () => {
@@ -6002,7 +6015,7 @@ function updateTiltSmoothing() {
   }
 
   const targetX = clamp(STATE.tilt.rawGamma / ORIENTATION_INPUT_RANGE_DEG, -1, 1) * PHYSICS_TILT_FORCE;
-  const targetZ = clamp((-STATE.tilt.rawBeta) / ORIENTATION_INPUT_RANGE_DEG, -1, 1) * PHYSICS_TILT_FORCE;
+  const targetZ = clamp((STATE.tilt.rawBeta) / ORIENTATION_INPUT_RANGE_DEG, -1, 1) * PHYSICS_TILT_FORCE;
   STATE.tilt.x += (targetX - STATE.tilt.x) * PHYSICS_TILT_SMOOTHING;
   STATE.tilt.z += (targetZ - STATE.tilt.z) * PHYSICS_TILT_SMOOTHING;
 }
@@ -6056,11 +6069,11 @@ function updatePhysics(delta) {
     const p = visual.phys;
 
     /* Desk items don't respond to tilt as much */
-    const tiltScale = p.onDesk ? 0.15 : 1.0;
+    const tiltScale = p.onDesk ? 0.22 : 1.0;
 
     if (hasForce) {
-      p.vx += forceX * (1 - p.friction) * 3.0 * tiltScale;
-      p.vz += forceZ * (1 - p.friction) * 3.0 * tiltScale;
+      p.vx += forceX * (1 - p.friction) * 5.8 * tiltScale;
+      p.vz += forceZ * (1 - p.friction) * 5.8 * tiltScale;
       p.settled = false;
     }
 
