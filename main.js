@@ -4,7 +4,7 @@ import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 
 const STORAGE_KEY = 'mind-room-memos-v3';
 const STORAGE_PAYLOAD_VERSION = 4;
-const ENABLE_HEAVY_DUMMY_MEMOS = true;
+const ENABLE_HEAVY_DUMMY_MEMOS = false;
 const DUMMY_MEMO_ID_PREFIX = 'dummy-mixed-20260329-v7-100-old-recent';
 const HEAVY_DUMMY_MEMO_COUNTS = Object.freeze({
   clutter: 20,
@@ -1126,7 +1126,22 @@ function buildHeavyDummyMemos(nowMs = Date.now()) {
 }
 
 function ensureHeavyDummyMemos() {
-  if (!ENABLE_HEAVY_DUMMY_MEMOS) return 0;
+  if (!ENABLE_HEAVY_DUMMY_MEMOS) {
+    const previousCount = STATE.memos.length;
+    const nonDummyMemos = STATE.memos.filter((memo) => !(typeof memo?.id === 'string' && memo.id.startsWith('dummy-')));
+    if (nonDummyMemos.length === previousCount) return 0;
+
+    STATE.memos = nonDummyMemos;
+
+    const nextLayoutCache = Object.create(null);
+    Object.entries(STATE.layoutCache || {}).forEach(([key, entry]) => {
+      if (typeof key === 'string' && (key.includes('dummy-') || key === 'clutter-old:shared')) return;
+      nextLayoutCache[key] = entry;
+    });
+    STATE.layoutCache = nextLayoutCache;
+
+    return previousCount - nonDummyMemos.length;
+  }
 
   const desiredDummyMemos = buildHeavyDummyMemos();
   const desiredIds = new Set(desiredDummyMemos.map((memo) => memo.id));
