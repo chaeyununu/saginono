@@ -112,40 +112,6 @@ const ASSET_FILES = {
   tumbler: 'tumbler.glb',
 };
 
-const ALL_TEMPLATE_KEYS = Object.freeze([
-  'note',
-  'scribble',
-  'clothesFolded',
-  'clothesScattered',
-  'paperSingle',
-  'paperSingle2',
-  'paperPile',
-  'snack',
-  'strawberry',
-  'jar',
-  'burn',
-  'tumbler',
-  'desk',
-]);
-
-const IS_COARSE_POINTER_DEVICE = (() => {
-  try {
-    if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) return true;
-  } catch (error) {
-    /* ignore */
-  }
-  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
-})();
-
-const INITIAL_ASSET_LOAD_TIMEOUT_MS = IS_COARSE_POINTER_DEVICE ? 4200 : 7000;
-const DEFERRED_ASSET_LOAD_TIMEOUT_MS = IS_COARSE_POINTER_DEVICE ? 6500 : 10000;
-const COARSE_INITIAL_SCENE_MEMO_LIMIT = 12;
-const COARSE_PROGRESSIVE_SCENE_BATCH = 8;
-const COARSE_PROGRESSIVE_SCENE_DELAY_MS = 480;
-const RENDERER_PIXEL_RATIO_CAP = IS_COARSE_POINTER_DEVICE ? 1.12 : 1.8;
-const SHADOW_MAP_SIZE = IS_COARSE_POINTER_DEVICE ? 1024 : 2048;
-const DISABLE_HOVER_PROXY_ON_COARSE = IS_COARSE_POINTER_DEVICE;
-
 const TARGET_MAX_DIMENSION = {
   desk: 7.75,
   note: 1.64,
@@ -1026,7 +992,6 @@ const STATE = {
   recognition: null,
   recognitionLanguage: HYBRID_RECOGNITION_LANG,
   hasMicPermission: false,
-  micPermissionPromise: null,
   isListening: false,
   keepRecognitionAlive: false,
   isFinalizing: false,
@@ -1045,8 +1010,6 @@ const STATE = {
   hoverDebouncePendingRoot: null,
   mixers: [],
   templates: {},
-  templateLoadPromises: {},
-  deferredAssetWarmupStarted: false,
   visuals: [],
   staticDecor: [],
   room: {
@@ -1066,8 +1029,6 @@ const STATE = {
   pendingVisualRebuild: false,
   appReady: false,
   loadingOverlay: null,
-  sceneMemoRenderLimit: IS_COARSE_POINTER_DEVICE ? COARSE_INITIAL_SCENE_MEMO_LIMIT : Number.POSITIVE_INFINITY,
-  progressiveSceneHydrationScheduled: false,
   playedEmotionRewardDropMemoIds: new Set(),
   layoutCache: Object.create(null),
   /* physics & interaction */
@@ -1655,7 +1616,6 @@ async function init() {
   startLoop();
   STATE.appReady = true;
   hideLoadingOverlay();
-  scheduleProgressiveSceneHydration();
 }
 
 function setupUI() {
@@ -1911,54 +1871,28 @@ function canRecord() {
   return true;
 }
 
-function getUserMediaCompat(constraints) {
-  if (navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function') {
-    return navigator.mediaDevices.getUserMedia(constraints);
-  }
-
-  const legacyGetUserMedia = navigator.getUserMedia
-    || navigator.webkitGetUserMedia
-    || navigator.mozGetUserMedia
-    || navigator.msGetUserMedia;
-
-  if (!legacyGetUserMedia) {
-    return Promise.reject(new Error('getUserMedia is not available in this browser'));
-  }
-
-  return new Promise((resolve, reject) => {
-    legacyGetUserMedia.call(navigator, constraints, resolve, reject);
-  });
-}
-
 async function requestMicrophonePermission() {
   if (STATE.hasMicPermission) return true;
-  if (STATE.micPermissionPromise) return STATE.micPermissionPromise;
 
-  STATE.micPermissionPromise = (async () => {
-    try {
-      const stream = await getUserMediaCompat({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          channelCount: 1,
-        },
-      });
-      stream.getTracks().forEach((track) => track.stop());
-      STATE.hasMicPermission = true;
-      setMicBadge('idle', '대기');
-      return true;
-    } catch (error) {
-      console.warn('Microphone permission error:', error);
-      setMicBadge('idle', '불가');
-      UI.selectionCopy.textContent = '';
-      return false;
-    } finally {
-      STATE.micPermissionPromise = null;
-    }
-  })();
-
-  return STATE.micPermissionPromise;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+      },
+    });
+    stream.getTracks().forEach((track) => track.stop());
+    STATE.hasMicPermission = true;
+    setMicBadge('idle', '대기');
+    return true;
+  } catch (error) {
+    console.warn('Microphone permission error:', error);
+    setMicBadge('idle', '불가');
+    UI.selectionCopy.textContent = '';
+    return false;
+  }
 }
 
 function ensureRecognition() {
@@ -2191,12 +2125,12 @@ function setupScene() {
     STATE.camera.lookAt(-0.55, 1.35, -2.35);
   }
 
-  STATE.renderer = new THREE.WebGLRenderer({ antialias: !IS_COARSE_POINTER_DEVICE, alpha: false });
-  STATE.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, RENDERER_PIXEL_RATIO_CAP));
+  STATE.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+  STATE.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.8));
   STATE.renderer.setSize(width, height);
   STATE.renderer.outputColorSpace = THREE.SRGBColorSpace;
   STATE.renderer.shadowMap.enabled = true;
-  STATE.renderer.shadowMap.type = IS_COARSE_POINTER_DEVICE ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
+  STATE.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   STATE.renderer.toneMappingExposure = 1.08;
   UI.sceneRoot.innerHTML = '';
   UI.sceneRoot.appendChild(STATE.renderer.domElement);
@@ -2207,7 +2141,7 @@ function setupScene() {
   const key = new THREE.DirectionalLight(0xffe2c6, 1.9);
   key.position.set(5.6, 9.5, 6.4);
   key.castShadow = true;
-  key.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+  key.shadow.mapSize.set(2048, 2048);
   key.shadow.camera.left = -14;
   key.shadow.camera.right = 14;
   key.shadow.camera.top = 12;
@@ -2278,159 +2212,29 @@ function buildRoomShell() {
   group.add(wallGlow);
 }
 
-function getTemplateFallbackFactory(key) {
-  switch (key) {
-    case 'note': return createNoteFallback;
-    case 'scribble': return createScribbleFallback;
-    case 'clothesFolded': return createClothesFoldedFallback;
-    case 'clothesScattered': return createClothesScatteredFallback;
-    case 'paperSingle': return () => createPaperFallback(0xe5dacb);
-    case 'paperSingle2': return () => createPaperFallback(0xd9d0e2);
-    case 'paperPile': return createPaperPileFallback;
-    case 'snack': return createSnackFallback;
-    case 'strawberry': return createStrawberryFallback;
-    case 'jar': return createJarFallback;
-    case 'burn': return createBurnFallback;
-    case 'tumbler': return createTumblerFallback;
-    case 'desk': return createDeskFallback;
-    default: return createNoteFallback;
-  }
-}
-
-function getRequiredAssetKeysForMemos(memos, nowMs = Date.now()) {
-  const keys = new Set(['desk']);
-  const activeMemos = Array.isArray(memos) ? memos.filter((memo) => memo && !memo.clearedAt) : [];
-
-  const clutterFresh = [];
-  const clutterOld = [];
-
-  activeMemos.forEach((memo) => {
-    if (!memo) return;
-
-    if (memo.category === 'record') {
-      const cachedLayout = getLayoutCacheEntry(getRecordLayoutKey(memo));
-      const useScribble = cachedLayout ? cachedLayout.assetKey === 'scribble' : (getMemoStableHash(memo, 'record-variant') % 3 === 2);
-      keys.add(useScribble ? 'scribble' : 'note');
-      return;
-    }
-
-    if (memo.category === 'clutter') {
-      const ageDays = getAgeDays(memo.createdAt, nowMs);
-      if (ageDays >= CLUTTER_MERGE_DAYS) clutterOld.push(memo);
-      else clutterFresh.push(memo);
-      return;
-    }
-
-    if (memo.category === 'routine') {
-      keys.add(getAgeDays(memo.createdAt, nowMs) >= ROUTINE_SCATTER_DAYS ? 'clothesScattered' : 'clothesFolded');
-      return;
-    }
-
-    if (memo.category === 'snack') {
-      keys.add(memo.fromEmotion ? getEmotionDecayAssetKey(memo, nowMs) : 'tumbler');
-      return;
-    }
-
-    if (memo.category === 'emotion') {
-      keys.add(getEmotionDecayAssetKey(memo, nowMs));
-    }
-  });
-
-  clutterFresh.forEach((memo) => {
-    const cachedLayout = getLayoutCacheEntry(getClutterFreshLayoutKey(memo));
-    const key = cachedLayout?.assetKey || (getMemoStableHash(memo, 'clutter-variant') % 2 === 0 ? 'paperSingle' : 'paperSingle2');
-    keys.add(key);
-  });
-
-  if (clutterOld.length >= 2) {
-    keys.add('paperPile');
-  } else if (clutterOld.length === 1) {
-    keys.add('paperSingle2');
-  }
-
-  return Array.from(keys);
-}
-
-function buildEphemeralTemplateFromFallback(key) {
-  const fallbackFactory = getTemplateFallbackFactory(key);
-  const root = fallbackFactory();
-  root.animations = root.animations || [];
-  normalizeTemplate(root, key);
-  applyShadowSettings(root);
-  return {
-    key,
-    root,
-    animations: root.animations || [],
-  };
-}
-
-async function loadTemplateByKey(loader, key, timeoutMs = INITIAL_ASSET_LOAD_TIMEOUT_MS) {
-  if (STATE.templates[key]) return STATE.templates[key];
-  if (STATE.templateLoadPromises[key]) return STATE.templateLoadPromises[key];
-
-  const fallbackFactory = getTemplateFallbackFactory(key);
-  const filename = ASSET_FILES[key];
-  const promise = loadTemplate(loader, key, filename, fallbackFactory, timeoutMs)
-    .then((template) => {
-      STATE.templates[key] = template;
-      return template;
-    })
-    .finally(() => {
-      delete STATE.templateLoadPromises[key];
-    });
-
-  STATE.templateLoadPromises[key] = promise;
-  return promise;
-}
-
-async function loadAssetKeys(loader, keys, timeoutMs = INITIAL_ASSET_LOAD_TIMEOUT_MS) {
-  const uniqueKeys = Array.from(new Set(keys)).filter((key) => ALL_TEMPLATE_KEYS.includes(key));
-  await Promise.all(uniqueKeys.map((key) => loadTemplateByKey(loader, key, timeoutMs)));
-}
-
-function warmDeferredAssets(loader, alreadyLoadedKeys = []) {
-  if (STATE.deferredAssetWarmupStarted) return;
-
-  const skip = new Set(alreadyLoadedKeys);
-  const remainingKeys = ALL_TEMPLATE_KEYS.filter((key) => !skip.has(key) && !STATE.templates[key]);
-  if (!remainingKeys.length) return;
-
-  STATE.deferredAssetWarmupStarted = true;
-  const run = () => {
-    loadAssetKeys(loader, remainingKeys, DEFERRED_ASSET_LOAD_TIMEOUT_MS).catch((error) => {
-      console.warn('Deferred asset warmup failed.', error);
-    });
-  };
-
-  if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
-    window.requestIdleCallback(() => run(), { timeout: 1200 });
-  } else {
-    window.setTimeout(run, 60);
-  }
-}
-
-async async function loadAssets() {
+async function loadAssets() {
   const loader = new GLTFLoader();
-  const initialSourceMemos = getRenderableSceneMemos(STATE.memos, IS_COARSE_POINTER_DEVICE ? COARSE_INITIAL_SCENE_MEMO_LIMIT : Number.POSITIVE_INFINITY);
-  const initialKeys = getRequiredAssetKeysForMemos(initialSourceMemos);
-  await loadAssetKeys(loader, initialKeys, INITIAL_ASSET_LOAD_TIMEOUT_MS);
-  warmDeferredAssets(loader, initialKeys);
+
+  STATE.templates.note = await loadTemplate(loader, 'note', ASSET_FILES.note, createNoteFallback);
+  STATE.templates.scribble = await loadTemplate(loader, 'scribble', ASSET_FILES.scribble, createScribbleFallback);
+  STATE.templates.clothesFolded = await loadTemplate(loader, 'clothesFolded', ASSET_FILES.clothesFolded, createClothesFoldedFallback);
+  STATE.templates.clothesScattered = await loadTemplate(loader, 'clothesScattered', ASSET_FILES.clothesScattered, createClothesScatteredFallback);
+  STATE.templates.paperSingle = await loadTemplate(loader, 'paperSingle', ASSET_FILES.paperSingle, () => createPaperFallback(0xe5dacb));
+  STATE.templates.paperSingle2 = await loadTemplate(loader, 'paperSingle2', ASSET_FILES.paperSingle2, () => createPaperFallback(0xd9d0e2));
+  STATE.templates.paperPile = await loadTemplate(loader, 'paperPile', ASSET_FILES.paperPile, createPaperPileFallback);
+  STATE.templates.snack = await loadTemplate(loader, 'snack', ASSET_FILES.snack, createSnackFallback);
+  STATE.templates.strawberry = await loadTemplate(loader, 'strawberry', ASSET_FILES.strawberry, createStrawberryFallback);
+  STATE.templates.jar = await loadTemplate(loader, 'jar', ASSET_FILES.jar, createJarFallback);
+  STATE.templates.burn = await loadTemplate(loader, 'burn', ASSET_FILES.burn, createBurnFallback);
+  STATE.templates.tumbler = await loadTemplate(loader, 'tumbler', ASSET_FILES.tumbler, createTumblerFallback);
+  STATE.templates.desk = await loadTemplate(loader, 'desk', ASSET_FILES.desk, createDeskFallback);
 }
 
-function createAssetLoadPromise(loader, filename) {
-  return loader.loadAsync(`./assets/${filename}`);
-}
-
-async function loadTemplate(loader, key, filename, fallbackFactory, timeoutMs = INITIAL_ASSET_LOAD_TIMEOUT_MS) {
+async function loadTemplate(loader, key, filename, fallbackFactory) {
   let root;
 
   try {
-    const gltf = await Promise.race([
-      createAssetLoadPromise(loader, filename),
-      new Promise((_, reject) => {
-        window.setTimeout(() => reject(new Error(`${filename} load timed out after ${timeoutMs}ms`)), timeoutMs);
-      }),
-    ]);
+    const gltf = await loader.loadAsync(`./assets/${filename}`);
     root = gltf.scene;
     root.animations = gltf.animations || [];
   } catch (error) {
@@ -2926,8 +2730,6 @@ function syncHoverProxyBounds(proxy, owner) {
 }
 
 function createMemoHoverProxy(object) {
-  if (DISABLE_HOVER_PROXY_ON_COARSE) return null;
-
   const proxy = new THREE.Mesh(
     new THREE.BoxGeometry(1, 1, 1),
     new THREE.MeshBasicMaterial({
@@ -3030,7 +2832,7 @@ function buildStaticDecor() {
 }
 
 function createAssetInstance(key) {
-  const template = STATE.templates[key] || buildEphemeralTemplateFromFallback(key);
+  const template = STATE.templates[key];
   const root = template.animations.length ? cloneSkeleton(template.root) : template.root.clone(true);
   root.userData.assetKey = key;
   applyShadowSettings(root);
@@ -3541,7 +3343,7 @@ function rebuildVisuals(animateMemoId = null) {
   snapshotLiveVisualTransformsToLayoutCache();
   disposeVisuals();
 
-  const activeMemos = getRenderableSceneMemos(STATE.memos);
+  const activeMemos = STATE.memos.filter((memo) => !memo.clearedAt);
   const now = Date.now();
 
   const clutterFresh = [];
@@ -4216,7 +4018,6 @@ function rebuildVisuals(animateMemoId = null) {
 
   updateCounts();
   STATE.lastVisualSignature = buildVisualSignature();
-  scheduleProgressiveSceneHydration();
 }
 
 function getEmotionRewardAssetKey(memo) {
