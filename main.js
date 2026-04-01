@@ -1084,15 +1084,117 @@ const EASTER_EMOTION_BATCH_SIZE = 10;
 const EASTER_ROUTINE_BATCH_SIZE = 10;
 const EASTER_ULTRA_RARE_CHANCE = 0.0025;
 const EASTER_RA4_COOLDOWN_MS = 12 * 60 * 1000;
+const ACTIVE_DUMMY_PREFIX = 'dummy-seed-';
+const DUMMY_MEMO_TARGET_COUNT = 20;
 
 
 function isDummyMemo(memo) {
   return typeof memo?.id === 'string' && memo.id.startsWith('dummy-');
 }
 
+function isActiveDummyMemo(memo) {
+  return typeof memo?.id === 'string' && memo.id.startsWith(ACTIVE_DUMMY_PREFIX);
+}
+
+function isLegacyDummyMemo(memo) {
+  return isDummyMemo(memo) && !isActiveDummyMemo(memo);
+}
+
+function buildSeedDummyMemos(count = DUMMY_MEMO_TARGET_COUNT, nowMs = Date.now()) {
+  const categoryCycle = ['emotion', 'record', 'clutter', 'routine', 'snack'];
+  const emotionCycle = ['good', 'bad', 'good', null, 'bad'];
+  const transcriptsByCategory = {
+    emotion: [
+      '오늘은 생각보다 마음이 차분했다.',
+      '괜히 예민해졌지만 금방 가라앉았다.',
+      '조금 외로웠지만 버텨냈다.',
+      '이상하게 자신감이 올라왔다.',
+      '마음이 흔들렸지만 기록해 둔다.',
+      '기분이 들쑥날쑥해서 정리가 필요했다.',
+      '사소한 말에 감정이 오래 남았다.',
+      '생각보다 괜찮은 하루였다.',
+    ],
+    record: [
+      '수업 끝나고 떠오른 아이디어를 적어 둠.',
+      '오늘 본 화면 구성 레퍼런스 저장.',
+      '앱 구조 수정 포인트 메모.',
+      '교수님 말 중 쓸만한 문장 기록.',
+      '나중에 다시 볼 코드 방향성 정리.',
+      '공부하다 떠오른 비유를 적어 둠.',
+      '포트폴리오에 넣을 키워드 메모.',
+      '내가 진짜 만들고 싶은 기능 기록.',
+    ],
+    clutter: [
+      '잡생각이 많아서 집중이 자꾸 끊겼다.',
+      '괜히 남들이랑 비교하는 생각이 들었다.',
+      '해야 할 게 많은데 손이 안 갔다.',
+      '머릿속이 시끄러워서 그냥 적어 둔다.',
+      '별 의미 없는 걱정이 길어졌다.',
+      'SNS 생각이 계속 맴돌았다.',
+      '정리 안 된 불안이 계속 남아 있다.',
+      '신경 쓰이는 일이 자꾸 떠올랐다.',
+    ],
+    routine: [
+      '책상 위부터 다시 정리해 보기.',
+      '오늘은 공부 시작 전에 물 마시기.',
+      '30분씩 끊어서 집중 루틴 유지.',
+      '밤에는 휴대폰 덜 보기.',
+      '내일 아침 먼저 해야 할 일 적기.',
+      '정리부터 하고 감정은 나중에 보기.',
+      '잠들기 전에 메모 한 번 훑기.',
+      '해야 할 일을 세 칸으로 나눠 보기.',
+    ],
+    snack: [
+      '이번 주는 흐트러져도 다시 시작하기.',
+      '조급해도 포기하지 않기.',
+      '내 페이스를 잃지 않기.',
+      '비교보다 축적에 집중하기.',
+      '작게라도 계속 만들기.',
+      '오늘도 하나는 끝내기.',
+      '감정에 끌려가도 루틴은 유지하기.',
+      '불안해도 손을 먼저 움직이기.',
+    ],
+  };
+
+  const oldestOffsetDays = 96;
+  const newestOffsetDays = 0.18;
+  const timeWindowMs = (oldestOffsetDays - newestOffsetDays) * 24 * 60 * 60 * 1000;
+
+  return Array.from({ length: count }, (_, index) => {
+    const progress = count === 1 ? 1 : index / (count - 1);
+    const createdAtMs = nowMs - ((oldestOffsetDays * 24 * 60 * 60 * 1000) - (timeWindowMs * progress));
+    const category = categoryCycle[index % categoryCycle.length];
+    const transcriptList = transcriptsByCategory[category];
+    const transcript = transcriptList[index % transcriptList.length];
+    const emotionTone = category === 'emotion'
+      ? (emotionCycle[index % emotionCycle.length] || (index % 2 === 0 ? 'good' : 'bad'))
+      : null;
+
+    return {
+      id: `${ACTIVE_DUMMY_PREFIX}${String(index + 1).padStart(3, '0')}`,
+      category,
+      emotionTone,
+      transcript,
+      createdAt: new Date(createdAtMs).toISOString(),
+      clearedAt: null,
+    };
+  });
+}
+
+function ensureSeedDummyMemos(targetCount = DUMMY_MEMO_TARGET_COUNT) {
+  const activeDummyCount = STATE.memos.filter((memo) => isActiveDummyMemo(memo)).length;
+  const hasNonDummyMemo = STATE.memos.some((memo) => !isActiveDummyMemo(memo));
+  if (hasNonDummyMemo) return false;
+  if (activeDummyCount === targetCount) return false;
+
+  STATE.memos = buildSeedDummyMemos(targetCount);
+  STATE.layoutCache = Object.create(null);
+  return true;
+}
+
 function cleanupLegacyDummyMemos() {
   const previousCount = STATE.memos.length;
-  const filteredMemos = STATE.memos.filter((memo) => !isDummyMemo(memo));
+  const filteredMemos = STATE.memos.filter((memo) => !isLegacyDummyMemo(memo));
 
   if (filteredMemos.length === previousCount) return 0;
 
@@ -1100,7 +1202,7 @@ function cleanupLegacyDummyMemos() {
 
   const nextLayoutCache = Object.create(null);
   Object.entries(STATE.layoutCache || {}).forEach(([key, entry]) => {
-    if (typeof key === 'string' && (key.includes('dummy-') || key === 'clutter-old:shared')) return;
+    if (typeof key === 'string' && ((key.includes('dummy-') && !key.includes(ACTIVE_DUMMY_PREFIX)) || key === 'clutter-old:shared')) return;
     nextLayoutCache[key] = entry;
   });
   STATE.layoutCache = nextLayoutCache;
@@ -1273,8 +1375,26 @@ function showEasterRa6() {
   ], { duration: 1160, easing: 'ease-out', fill: 'forwards' });
 }
 
-function getRealMemoCountByCategory(category) {
-  return STATE.memos.filter((memo) => memo && !isDummyMemo(memo) && memo.category === category).length;
+function getActiveMemoCountByCategory(category, options = {}) {
+  const { excludeFromEmotion = false } = options;
+
+  return STATE.memos.filter((memo) => {
+    if (!memo || isDummyMemo(memo) || memo.clearedAt) return false;
+    if (memo.category !== category) return false;
+    if (excludeFromEmotion && memo.fromEmotion) return false;
+    return true;
+  }).length;
+}
+
+function getVisibleSnackTumblerCount() {
+  return STATE.memos.reduce((count, memo) => {
+    if (!memo || isDummyMemo(memo) || memo.clearedAt) return count;
+    if (memo.category !== 'snack' || memo.fromEmotion) return count;
+
+    const entry = getLayoutCacheEntry(getSnackLayoutKey(memo));
+    if (entry?.assetKey !== 'tumbler') return count;
+    return count + 1;
+  }, 0);
 }
 
 function resetDeleteStreak() {
@@ -1313,17 +1433,17 @@ function maybeTriggerCreationEasters(memo) {
   if (!memo || isDummyMemo(memo)) return;
 
   if (memo.category === 'snack') {
-    const snackCount = getRealMemoCountByCategory('snack');
-    const previousSnackCount = Math.max(0, snackCount - 1);
-    const crossedSnackBatch = Math.floor(snackCount / EASTER_SNACK_BATCH_SIZE)
-      > Math.floor(previousSnackCount / EASTER_SNACK_BATCH_SIZE);
+    const tumblerCount = getVisibleSnackTumblerCount();
+    const previousTumblerCount = Math.max(0, tumblerCount - 1);
+    const crossedSnackBatch = Math.floor(tumblerCount / EASTER_SNACK_BATCH_SIZE)
+      > Math.floor(previousTumblerCount / EASTER_SNACK_BATCH_SIZE);
 
     if (crossedSnackBatch) {
       scheduleCreationEaster(
-        snackCount,
-        (requiredCount) => getRealMemoCountByCategory('snack') >= requiredCount,
+        tumblerCount,
+        (requiredCount) => getVisibleSnackTumblerCount() >= requiredCount,
         () => {
-          console.info(`[easter] ra1 triggered at snack count ${snackCount}`);
+          console.info(`[easter] ra1 triggered at visible tumbler count ${tumblerCount}`);
           showEasterRa1();
         },
       );
@@ -1331,7 +1451,7 @@ function maybeTriggerCreationEasters(memo) {
   }
 
   if (memo.category === 'emotion') {
-    const emotionCount = getRealMemoCountByCategory('emotion');
+    const emotionCount = getActiveMemoCountByCategory('emotion');
     const previousEmotionCount = Math.max(0, emotionCount - 1);
     const crossedEmotionBatch = Math.floor(emotionCount / EASTER_EMOTION_BATCH_SIZE)
       > Math.floor(previousEmotionCount / EASTER_EMOTION_BATCH_SIZE);
@@ -1339,7 +1459,7 @@ function maybeTriggerCreationEasters(memo) {
     if (crossedEmotionBatch) {
       scheduleCreationEaster(
         emotionCount,
-        (requiredCount) => getRealMemoCountByCategory('emotion') >= requiredCount,
+        (requiredCount) => getActiveMemoCountByCategory('emotion') >= requiredCount,
         () => {
           console.info(`[easter] ra5 triggered at emotion count ${emotionCount}`);
           showEasterRa5();
@@ -1349,7 +1469,7 @@ function maybeTriggerCreationEasters(memo) {
   }
 
   if (memo.category === 'routine') {
-    const routineCount = getRealMemoCountByCategory('routine');
+    const routineCount = getActiveMemoCountByCategory('routine');
     const previousRoutineCount = Math.max(0, routineCount - 1);
     const crossedRoutineBatch = Math.floor(routineCount / EASTER_ROUTINE_BATCH_SIZE)
       > Math.floor(previousRoutineCount / EASTER_ROUTINE_BATCH_SIZE);
@@ -1357,7 +1477,7 @@ function maybeTriggerCreationEasters(memo) {
     if (crossedRoutineBatch) {
       scheduleCreationEaster(
         routineCount,
-        (requiredCount) => getRealMemoCountByCategory('routine') >= requiredCount,
+        (requiredCount) => getActiveMemoCountByCategory('routine') >= requiredCount,
         () => {
           console.info(`[easter] ra6 triggered at routine count ${routineCount}`);
           showEasterRa6();
@@ -1481,7 +1601,8 @@ async function init() {
   setupButtonSoundUI();
   ensureEasterOverlayRoot();
   const removedLegacyDummyMemoCount = cleanupLegacyDummyMemos();
-  if (removedLegacyDummyMemoCount > 0) persistStorage();
+  const seededDummyMemos = ensureSeedDummyMemos();
+  if (removedLegacyDummyMemoCount > 0 || seededDummyMemos) persistStorage();
   seedPlayedEmotionRewardDropsFromExistingMemos();
   setupUI();
   renderCategoryChips();
