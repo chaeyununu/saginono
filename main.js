@@ -1273,26 +1273,8 @@ function showEasterRa6() {
   ], { duration: 1160, easing: 'ease-out', fill: 'forwards' });
 }
 
-function getActiveMemoCountByCategory(category, options = {}) {
-  const { excludeFromEmotion = false } = options;
-
-  return STATE.memos.filter((memo) => {
-    if (!memo || isDummyMemo(memo) || memo.clearedAt) return false;
-    if (memo.category !== category) return false;
-    if (excludeFromEmotion && memo.fromEmotion) return false;
-    return true;
-  }).length;
-}
-
-function getVisibleSnackTumblerCount() {
-  return STATE.memos.reduce((count, memo) => {
-    if (!memo || isDummyMemo(memo) || memo.clearedAt) return count;
-    if (memo.category !== 'snack' || memo.fromEmotion) return count;
-
-    const entry = getLayoutCacheEntry(getSnackLayoutKey(memo));
-    if (entry?.assetKey !== 'tumbler') return count;
-    return count + 1;
-  }, 0);
+function getRealMemoCountByCategory(category) {
+  return STATE.memos.filter((memo) => memo && !isDummyMemo(memo) && memo.category === category).length;
 }
 
 function resetDeleteStreak() {
@@ -1331,17 +1313,17 @@ function maybeTriggerCreationEasters(memo) {
   if (!memo || isDummyMemo(memo)) return;
 
   if (memo.category === 'snack') {
-    const tumblerCount = getVisibleSnackTumblerCount();
-    const previousTumblerCount = Math.max(0, tumblerCount - 1);
-    const crossedSnackBatch = Math.floor(tumblerCount / EASTER_SNACK_BATCH_SIZE)
-      > Math.floor(previousTumblerCount / EASTER_SNACK_BATCH_SIZE);
+    const snackCount = getRealMemoCountByCategory('snack');
+    const previousSnackCount = Math.max(0, snackCount - 1);
+    const crossedSnackBatch = Math.floor(snackCount / EASTER_SNACK_BATCH_SIZE)
+      > Math.floor(previousSnackCount / EASTER_SNACK_BATCH_SIZE);
 
     if (crossedSnackBatch) {
       scheduleCreationEaster(
-        tumblerCount,
-        (requiredCount) => getVisibleSnackTumblerCount() >= requiredCount,
+        snackCount,
+        (requiredCount) => getRealMemoCountByCategory('snack') >= requiredCount,
         () => {
-          console.info(`[easter] ra1 triggered at visible tumbler count ${tumblerCount}`);
+          console.info(`[easter] ra1 triggered at snack count ${snackCount}`);
           showEasterRa1();
         },
       );
@@ -1349,7 +1331,7 @@ function maybeTriggerCreationEasters(memo) {
   }
 
   if (memo.category === 'emotion') {
-    const emotionCount = getActiveMemoCountByCategory('emotion');
+    const emotionCount = getRealMemoCountByCategory('emotion');
     const previousEmotionCount = Math.max(0, emotionCount - 1);
     const crossedEmotionBatch = Math.floor(emotionCount / EASTER_EMOTION_BATCH_SIZE)
       > Math.floor(previousEmotionCount / EASTER_EMOTION_BATCH_SIZE);
@@ -1357,7 +1339,7 @@ function maybeTriggerCreationEasters(memo) {
     if (crossedEmotionBatch) {
       scheduleCreationEaster(
         emotionCount,
-        (requiredCount) => getActiveMemoCountByCategory('emotion') >= requiredCount,
+        (requiredCount) => getRealMemoCountByCategory('emotion') >= requiredCount,
         () => {
           console.info(`[easter] ra5 triggered at emotion count ${emotionCount}`);
           showEasterRa5();
@@ -1367,7 +1349,7 @@ function maybeTriggerCreationEasters(memo) {
   }
 
   if (memo.category === 'routine') {
-    const routineCount = getActiveMemoCountByCategory('routine');
+    const routineCount = getRealMemoCountByCategory('routine');
     const previousRoutineCount = Math.max(0, routineCount - 1);
     const crossedRoutineBatch = Math.floor(routineCount / EASTER_ROUTINE_BATCH_SIZE)
       > Math.floor(previousRoutineCount / EASTER_ROUTINE_BATCH_SIZE);
@@ -1375,7 +1357,7 @@ function maybeTriggerCreationEasters(memo) {
     if (crossedRoutineBatch) {
       scheduleCreationEaster(
         routineCount,
-        (requiredCount) => getActiveMemoCountByCategory('routine') >= requiredCount,
+        (requiredCount) => getRealMemoCountByCategory('routine') >= requiredCount,
         () => {
           console.info(`[easter] ra6 triggered at routine count ${routineCount}`);
           showEasterRa6();
