@@ -1084,117 +1084,15 @@ const EASTER_EMOTION_BATCH_SIZE = 10;
 const EASTER_ROUTINE_BATCH_SIZE = 10;
 const EASTER_ULTRA_RARE_CHANCE = 0.0025;
 const EASTER_RA4_COOLDOWN_MS = 12 * 60 * 1000;
-const ACTIVE_DUMMY_PREFIX = 'dummy-seed-';
-const DUMMY_MEMO_TARGET_COUNT = 20;
 
 
 function isDummyMemo(memo) {
   return typeof memo?.id === 'string' && memo.id.startsWith('dummy-');
 }
 
-function isActiveDummyMemo(memo) {
-  return typeof memo?.id === 'string' && memo.id.startsWith(ACTIVE_DUMMY_PREFIX);
-}
-
-function isLegacyDummyMemo(memo) {
-  return isDummyMemo(memo) && !isActiveDummyMemo(memo);
-}
-
-function buildSeedDummyMemos(count = DUMMY_MEMO_TARGET_COUNT, nowMs = Date.now()) {
-  const categoryCycle = ['emotion', 'record', 'clutter', 'routine', 'snack'];
-  const emotionCycle = ['good', 'bad', 'good', null, 'bad'];
-  const transcriptsByCategory = {
-    emotion: [
-      '오늘은 생각보다 마음이 차분했다.',
-      '괜히 예민해졌지만 금방 가라앉았다.',
-      '조금 외로웠지만 버텨냈다.',
-      '이상하게 자신감이 올라왔다.',
-      '마음이 흔들렸지만 기록해 둔다.',
-      '기분이 들쑥날쑥해서 정리가 필요했다.',
-      '사소한 말에 감정이 오래 남았다.',
-      '생각보다 괜찮은 하루였다.',
-    ],
-    record: [
-      '수업 끝나고 떠오른 아이디어를 적어 둠.',
-      '오늘 본 화면 구성 레퍼런스 저장.',
-      '앱 구조 수정 포인트 메모.',
-      '교수님 말 중 쓸만한 문장 기록.',
-      '나중에 다시 볼 코드 방향성 정리.',
-      '공부하다 떠오른 비유를 적어 둠.',
-      '포트폴리오에 넣을 키워드 메모.',
-      '내가 진짜 만들고 싶은 기능 기록.',
-    ],
-    clutter: [
-      '잡생각이 많아서 집중이 자꾸 끊겼다.',
-      '괜히 남들이랑 비교하는 생각이 들었다.',
-      '해야 할 게 많은데 손이 안 갔다.',
-      '머릿속이 시끄러워서 그냥 적어 둔다.',
-      '별 의미 없는 걱정이 길어졌다.',
-      'SNS 생각이 계속 맴돌았다.',
-      '정리 안 된 불안이 계속 남아 있다.',
-      '신경 쓰이는 일이 자꾸 떠올랐다.',
-    ],
-    routine: [
-      '책상 위부터 다시 정리해 보기.',
-      '오늘은 공부 시작 전에 물 마시기.',
-      '30분씩 끊어서 집중 루틴 유지.',
-      '밤에는 휴대폰 덜 보기.',
-      '내일 아침 먼저 해야 할 일 적기.',
-      '정리부터 하고 감정은 나중에 보기.',
-      '잠들기 전에 메모 한 번 훑기.',
-      '해야 할 일을 세 칸으로 나눠 보기.',
-    ],
-    snack: [
-      '이번 주는 흐트러져도 다시 시작하기.',
-      '조급해도 포기하지 않기.',
-      '내 페이스를 잃지 않기.',
-      '비교보다 축적에 집중하기.',
-      '작게라도 계속 만들기.',
-      '오늘도 하나는 끝내기.',
-      '감정에 끌려가도 루틴은 유지하기.',
-      '불안해도 손을 먼저 움직이기.',
-    ],
-  };
-
-  const oldestOffsetDays = 96;
-  const newestOffsetDays = 0.18;
-  const timeWindowMs = (oldestOffsetDays - newestOffsetDays) * 24 * 60 * 60 * 1000;
-
-  return Array.from({ length: count }, (_, index) => {
-    const progress = count === 1 ? 1 : index / (count - 1);
-    const createdAtMs = nowMs - ((oldestOffsetDays * 24 * 60 * 60 * 1000) - (timeWindowMs * progress));
-    const category = categoryCycle[index % categoryCycle.length];
-    const transcriptList = transcriptsByCategory[category];
-    const transcript = transcriptList[index % transcriptList.length];
-    const emotionTone = category === 'emotion'
-      ? (emotionCycle[index % emotionCycle.length] || (index % 2 === 0 ? 'good' : 'bad'))
-      : null;
-
-    return {
-      id: `${ACTIVE_DUMMY_PREFIX}${String(index + 1).padStart(3, '0')}`,
-      category,
-      emotionTone,
-      transcript,
-      createdAt: new Date(createdAtMs).toISOString(),
-      clearedAt: null,
-    };
-  });
-}
-
-function ensureSeedDummyMemos(targetCount = DUMMY_MEMO_TARGET_COUNT) {
-  const activeDummyCount = STATE.memos.filter((memo) => isActiveDummyMemo(memo)).length;
-  const hasNonDummyMemo = STATE.memos.some((memo) => !isActiveDummyMemo(memo));
-  if (hasNonDummyMemo) return false;
-  if (activeDummyCount === targetCount) return false;
-
-  STATE.memos = buildSeedDummyMemos(targetCount);
-  STATE.layoutCache = Object.create(null);
-  return true;
-}
-
 function cleanupLegacyDummyMemos() {
   const previousCount = STATE.memos.length;
-  const filteredMemos = STATE.memos.filter((memo) => !isLegacyDummyMemo(memo));
+  const filteredMemos = STATE.memos.filter((memo) => !isDummyMemo(memo));
 
   if (filteredMemos.length === previousCount) return 0;
 
@@ -1202,7 +1100,7 @@ function cleanupLegacyDummyMemos() {
 
   const nextLayoutCache = Object.create(null);
   Object.entries(STATE.layoutCache || {}).forEach(([key, entry]) => {
-    if (typeof key === 'string' && ((key.includes('dummy-') && !key.includes(ACTIVE_DUMMY_PREFIX)) || key === 'clutter-old:shared')) return;
+    if (typeof key === 'string' && (key.includes('dummy-') || key === 'clutter-old:shared')) return;
     nextLayoutCache[key] = entry;
   });
   STATE.layoutCache = nextLayoutCache;
@@ -1375,26 +1273,8 @@ function showEasterRa6() {
   ], { duration: 1160, easing: 'ease-out', fill: 'forwards' });
 }
 
-function getActiveMemoCountByCategory(category, options = {}) {
-  const { excludeFromEmotion = false } = options;
-
-  return STATE.memos.filter((memo) => {
-    if (!memo || isDummyMemo(memo) || memo.clearedAt) return false;
-    if (memo.category !== category) return false;
-    if (excludeFromEmotion && memo.fromEmotion) return false;
-    return true;
-  }).length;
-}
-
-function getVisibleSnackTumblerCount() {
-  return STATE.memos.reduce((count, memo) => {
-    if (!memo || isDummyMemo(memo) || memo.clearedAt) return count;
-    if (memo.category !== 'snack' || memo.fromEmotion) return count;
-
-    const entry = getLayoutCacheEntry(getSnackLayoutKey(memo));
-    if (entry?.assetKey !== 'tumbler') return count;
-    return count + 1;
-  }, 0);
+function getRealMemoCountByCategory(category) {
+  return STATE.memos.filter((memo) => memo && !isDummyMemo(memo) && memo.category === category).length;
 }
 
 function resetDeleteStreak() {
@@ -1433,17 +1313,17 @@ function maybeTriggerCreationEasters(memo) {
   if (!memo || isDummyMemo(memo)) return;
 
   if (memo.category === 'snack') {
-    const tumblerCount = getVisibleSnackTumblerCount();
-    const previousTumblerCount = Math.max(0, tumblerCount - 1);
-    const crossedSnackBatch = Math.floor(tumblerCount / EASTER_SNACK_BATCH_SIZE)
-      > Math.floor(previousTumblerCount / EASTER_SNACK_BATCH_SIZE);
+    const snackCount = getRealMemoCountByCategory('snack');
+    const previousSnackCount = Math.max(0, snackCount - 1);
+    const crossedSnackBatch = Math.floor(snackCount / EASTER_SNACK_BATCH_SIZE)
+      > Math.floor(previousSnackCount / EASTER_SNACK_BATCH_SIZE);
 
     if (crossedSnackBatch) {
       scheduleCreationEaster(
-        tumblerCount,
-        (requiredCount) => getVisibleSnackTumblerCount() >= requiredCount,
+        snackCount,
+        (requiredCount) => getRealMemoCountByCategory('snack') >= requiredCount,
         () => {
-          console.info(`[easter] ra1 triggered at visible tumbler count ${tumblerCount}`);
+          console.info(`[easter] ra1 triggered at snack count ${snackCount}`);
           showEasterRa1();
         },
       );
@@ -1451,7 +1331,7 @@ function maybeTriggerCreationEasters(memo) {
   }
 
   if (memo.category === 'emotion') {
-    const emotionCount = getActiveMemoCountByCategory('emotion');
+    const emotionCount = getRealMemoCountByCategory('emotion');
     const previousEmotionCount = Math.max(0, emotionCount - 1);
     const crossedEmotionBatch = Math.floor(emotionCount / EASTER_EMOTION_BATCH_SIZE)
       > Math.floor(previousEmotionCount / EASTER_EMOTION_BATCH_SIZE);
@@ -1459,7 +1339,7 @@ function maybeTriggerCreationEasters(memo) {
     if (crossedEmotionBatch) {
       scheduleCreationEaster(
         emotionCount,
-        (requiredCount) => getActiveMemoCountByCategory('emotion') >= requiredCount,
+        (requiredCount) => getRealMemoCountByCategory('emotion') >= requiredCount,
         () => {
           console.info(`[easter] ra5 triggered at emotion count ${emotionCount}`);
           showEasterRa5();
@@ -1469,7 +1349,7 @@ function maybeTriggerCreationEasters(memo) {
   }
 
   if (memo.category === 'routine') {
-    const routineCount = getActiveMemoCountByCategory('routine');
+    const routineCount = getRealMemoCountByCategory('routine');
     const previousRoutineCount = Math.max(0, routineCount - 1);
     const crossedRoutineBatch = Math.floor(routineCount / EASTER_ROUTINE_BATCH_SIZE)
       > Math.floor(previousRoutineCount / EASTER_ROUTINE_BATCH_SIZE);
@@ -1477,7 +1357,7 @@ function maybeTriggerCreationEasters(memo) {
     if (crossedRoutineBatch) {
       scheduleCreationEaster(
         routineCount,
-        (requiredCount) => getActiveMemoCountByCategory('routine') >= requiredCount,
+        (requiredCount) => getRealMemoCountByCategory('routine') >= requiredCount,
         () => {
           console.info(`[easter] ra6 triggered at routine count ${routineCount}`);
           showEasterRa6();
@@ -1601,8 +1481,7 @@ async function init() {
   setupButtonSoundUI();
   ensureEasterOverlayRoot();
   const removedLegacyDummyMemoCount = cleanupLegacyDummyMemos();
-  const seededDummyMemos = ensureSeedDummyMemos();
-  if (removedLegacyDummyMemoCount > 0 || seededDummyMemos) persistStorage();
+  if (removedLegacyDummyMemoCount > 0) persistStorage();
   seedPlayedEmotionRewardDropsFromExistingMemos();
   setupUI();
   renderCategoryChips();
@@ -2127,8 +2006,8 @@ function setupScene() {
     STATE.camera.lookAt(-0.55, 1.35, -2.35);
   }
 
-  STATE.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-  STATE.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.8));
+  STATE.renderer = new THREE.WebGLRenderer({ antialias: !isMobile, alpha: false, powerPreference: 'high-performance' });
+  STATE.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 1.8));
   STATE.renderer.setSize(width, height);
   STATE.renderer.outputColorSpace = THREE.SRGBColorSpace;
   STATE.renderer.shadowMap.enabled = true;
@@ -2140,10 +2019,11 @@ function setupScene() {
   const hemi = new THREE.HemisphereLight(0xfffbf4, 0xe9dfd3, 1.7);
   STATE.scene.add(hemi);
 
+  const shadowMapRes = isMobile ? 1024 : 2048;
   const key = new THREE.DirectionalLight(0xffe2c6, 1.9);
   key.position.set(5.6, 9.5, 6.4);
   key.castShadow = true;
-  key.shadow.mapSize.set(2048, 2048);
+  key.shadow.mapSize.set(shadowMapRes, shadowMapRes);
   key.shadow.camera.left = -14;
   key.shadow.camera.right = 14;
   key.shadow.camera.top = 12;
@@ -2217,19 +2097,29 @@ function buildRoomShell() {
 async function loadAssets() {
   const loader = new GLTFLoader();
 
-  STATE.templates.note = await loadTemplate(loader, 'note', ASSET_FILES.note, createNoteFallback);
-  STATE.templates.scribble = await loadTemplate(loader, 'scribble', ASSET_FILES.scribble, createScribbleFallback);
-  STATE.templates.clothesFolded = await loadTemplate(loader, 'clothesFolded', ASSET_FILES.clothesFolded, createClothesFoldedFallback);
-  STATE.templates.clothesScattered = await loadTemplate(loader, 'clothesScattered', ASSET_FILES.clothesScattered, createClothesScatteredFallback);
-  STATE.templates.paperSingle = await loadTemplate(loader, 'paperSingle', ASSET_FILES.paperSingle, () => createPaperFallback(0xe5dacb));
-  STATE.templates.paperSingle2 = await loadTemplate(loader, 'paperSingle2', ASSET_FILES.paperSingle2, () => createPaperFallback(0xd9d0e2));
-  STATE.templates.paperPile = await loadTemplate(loader, 'paperPile', ASSET_FILES.paperPile, createPaperPileFallback);
-  STATE.templates.snack = await loadTemplate(loader, 'snack', ASSET_FILES.snack, createSnackFallback);
-  STATE.templates.strawberry = await loadTemplate(loader, 'strawberry', ASSET_FILES.strawberry, createStrawberryFallback);
-  STATE.templates.jar = await loadTemplate(loader, 'jar', ASSET_FILES.jar, createJarFallback);
-  STATE.templates.burn = await loadTemplate(loader, 'burn', ASSET_FILES.burn, createBurnFallback);
-  STATE.templates.tumbler = await loadTemplate(loader, 'tumbler', ASSET_FILES.tumbler, createTumblerFallback);
-  STATE.templates.desk = await loadTemplate(loader, 'desk', ASSET_FILES.desk, createDeskFallback);
+  const templateEntries = [
+    ['note', ASSET_FILES.note, createNoteFallback],
+    ['scribble', ASSET_FILES.scribble, createScribbleFallback],
+    ['clothesFolded', ASSET_FILES.clothesFolded, createClothesFoldedFallback],
+    ['clothesScattered', ASSET_FILES.clothesScattered, createClothesScatteredFallback],
+    ['paperSingle', ASSET_FILES.paperSingle, () => createPaperFallback(0xe5dacb)],
+    ['paperSingle2', ASSET_FILES.paperSingle2, () => createPaperFallback(0xd9d0e2)],
+    ['paperPile', ASSET_FILES.paperPile, createPaperPileFallback],
+    ['snack', ASSET_FILES.snack, createSnackFallback],
+    ['strawberry', ASSET_FILES.strawberry, createStrawberryFallback],
+    ['jar', ASSET_FILES.jar, createJarFallback],
+    ['burn', ASSET_FILES.burn, createBurnFallback],
+    ['tumbler', ASSET_FILES.tumbler, createTumblerFallback],
+    ['desk', ASSET_FILES.desk, createDeskFallback],
+  ];
+
+  const results = await Promise.all(
+    templateEntries.map(([key, filename, fallback]) => loadTemplate(loader, key, filename, fallback))
+  );
+
+  templateEntries.forEach(([key], index) => {
+    STATE.templates[key] = results[index];
+  });
 }
 
 async function loadTemplate(loader, key, filename, fallbackFactory) {
@@ -2389,7 +2279,7 @@ function analyzeDeskSurface() {
     for (let iz = 0; iz < stepsZ; iz += 1) {
       const x = THREE.MathUtils.lerp(box.min.x + padX, box.max.x - padX, ix / Math.max(stepsX - 1, 1));
       const z = THREE.MathUtils.lerp(box.min.z + padZ, box.max.z - padZ, iz / Math.max(stepsZ - 1, 1));
-      DESK_RAYCASTER.set(new THREE.Vector3(x, originY, z), new THREE.Vector3(0, -1, 0));
+      DESK_RAYCASTER.set(_RAYCAST_ORIGIN.set(x, originY, z), _RAYCAST_DOWN_DIR);
       const hits = DESK_RAYCASTER.intersectObjects(meshes, false);
       const hit = hits.find((entry) => {
         const worldNormal = getWorldUpNormal(entry);
@@ -2443,6 +2333,9 @@ function analyzeDeskSurface() {
   };
 }
 
+const _RAYCAST_DOWN_DIR = new THREE.Vector3(0, -1, 0);
+const _RAYCAST_ORIGIN = new THREE.Vector3();
+
 function findClosestHorizontalSurfacePoint(meshes, bounds, targetY, tolerance, x, z, options = {}) {
   if (!meshes?.length || !bounds) return null;
 
@@ -2460,7 +2353,8 @@ function findClosestHorizontalSurfacePoint(meshes, bounds, targetY, tolerance, x
     for (let iz = -steps; iz <= steps; iz += 1) {
       const sampleX = x + ((steps ? ix / steps : 0) * searchRadius);
       const sampleZ = z + ((steps ? iz / steps : 0) * searchRadius);
-      DESK_RAYCASTER.set(new THREE.Vector3(sampleX, originY, sampleZ), new THREE.Vector3(0, -1, 0));
+      _RAYCAST_ORIGIN.set(sampleX, originY, sampleZ);
+      DESK_RAYCASTER.set(_RAYCAST_ORIGIN, _RAYCAST_DOWN_DIR);
       const hits = DESK_RAYCASTER.intersectObjects(meshes, false);
 
       hits.forEach((hit) => {
@@ -2522,7 +2416,7 @@ function analyzeChairSeatSurface() {
     for (let iz = 0; iz < stepsZ; iz += 1) {
       const x = THREE.MathUtils.lerp(minX, maxX, ix / Math.max(stepsX - 1, 1));
       const z = THREE.MathUtils.lerp(minZ, maxZ, iz / Math.max(stepsZ - 1, 1));
-      DESK_RAYCASTER.set(new THREE.Vector3(x, originY, z), new THREE.Vector3(0, -1, 0));
+      DESK_RAYCASTER.set(_RAYCAST_ORIGIN.set(x, originY, z), _RAYCAST_DOWN_DIR);
       const hits = DESK_RAYCASTER.intersectObjects(deskMeshes, false);
       const hit = hits.find((entry) => {
         const worldNormal = getWorldUpNormal(entry);
@@ -2731,16 +2625,16 @@ function syncHoverProxyBounds(proxy, owner) {
   proxy.updateMatrixWorld(true);
 }
 
+const SHARED_HOVER_PROXY_GEO = new THREE.BoxGeometry(1, 1, 1);
+const SHARED_HOVER_PROXY_MAT = new THREE.MeshBasicMaterial({
+  transparent: true,
+  opacity: 0,
+  depthWrite: false,
+  colorWrite: false,
+});
+
 function createMemoHoverProxy(object) {
-  const proxy = new THREE.Mesh(
-    new THREE.BoxGeometry(1, 1, 1),
-    new THREE.MeshBasicMaterial({
-      transparent: true,
-      opacity: 0,
-      depthWrite: false,
-      colorWrite: false,
-    }),
-  );
+  const proxy = new THREE.Mesh(SHARED_HOVER_PROXY_GEO, SHARED_HOVER_PROXY_MAT);
 
   proxy.userData.memoVisual = true;
   proxy.userData.hoverOwner = object;
@@ -2837,7 +2731,7 @@ function createAssetInstance(key) {
   const template = STATE.templates[key];
   const root = template.animations.length ? cloneSkeleton(template.root) : template.root.clone(true);
   root.userData.assetKey = key;
-  applyShadowSettings(root);
+  /* Shadow settings are inherited from the template — no need to re-traverse */
 
   let mixer = null;
   let action = null;
@@ -4257,8 +4151,7 @@ function disposeVisuals() {
 
     if (visual.hoverProxy) {
       STATE.scene.remove(visual.hoverProxy);
-      visual.hoverProxy.geometry?.dispose?.();
-      visual.hoverProxy.material?.dispose?.();
+      /* shared geometry/material — do NOT dispose */
     }
 
     STATE.scene.remove(visual.object);
@@ -4283,8 +4176,7 @@ function disposeSingleVisual(visual) {
 
   if (visual.hoverProxy) {
     STATE.scene.remove(visual.hoverProxy);
-    visual.hoverProxy.geometry?.dispose?.();
-    visual.hoverProxy.material?.dispose?.();
+    /* shared geometry/material — do NOT dispose */
   }
 
   STATE.scene.remove(visual.object);
@@ -5325,9 +5217,16 @@ function startLoop() {
 
     STATE.visuals.forEach((visual) => {
       if (visual.kind !== 'asset' || !visual.hoverProxy || !visual.object) return;
-      syncHoverProxyBounds(visual.hoverProxy, visual.object);
       /* Auto-init physics for newly created visuals */
-      if (!visual.phys) initVisualPhysics(visual);
+      if (!visual.phys) {
+        initVisualPhysics(visual);
+        syncHoverProxyBounds(visual.hoverProxy, visual.object);
+        return;
+      }
+      /* Only re-sync bounds when the object is actually moving */
+      if (visual.dropIntro || !visual.phys.settled) {
+        syncHoverProxyBounds(visual.hoverProxy, visual.object);
+      }
     });
 
     if (STATE.pendingVisualRebuild) {
@@ -5356,20 +5255,19 @@ function startLoop() {
 }
 
 function buildVisualSignature() {
-  return STATE.memos
-    .map((memo) => {
-      if (memo.clearedAt) return `${memo.id}:cleared`;
-      const ageDays = getAgeDays(memo.createdAt, Date.now());
-
-      if (memo.category === 'emotion') {
-        return `${memo.id}:emotion-${getEmotionDecayAssetKey(memo, Date.now())}`;
-      }
-
-      if (memo.category === 'clutter') return `${memo.id}:clutter-${ageDays >= CLUTTER_MERGE_DAYS ? 'old' : 'fresh'}`;
-      if (memo.category === 'routine') return `${memo.id}:routine-${ageDays >= ROUTINE_SCATTER_DAYS ? 'scattered' : 'folded'}`;
-      return `${memo.id}:active`;
-    })
-    .join('|');
+  const nowMs = Date.now();
+  let sig = '';
+  for (let i = 0; i < STATE.memos.length; i++) {
+    const memo = STATE.memos[i];
+    if (i > 0) sig += '|';
+    if (memo.clearedAt) { sig += memo.id; sig += ':cleared'; continue; }
+    const ageDays = getAgeDays(memo.createdAt, nowMs);
+    if (memo.category === 'emotion') { sig += memo.id; sig += ':emotion-'; sig += getEmotionDecayAssetKey(memo, nowMs); continue; }
+    if (memo.category === 'clutter') { sig += memo.id; sig += ageDays >= CLUTTER_MERGE_DAYS ? ':clutter-old' : ':clutter-fresh'; continue; }
+    if (memo.category === 'routine') { sig += memo.id; sig += ageDays >= ROUTINE_SCATTER_DAYS ? ':routine-scattered' : ':routine-folded'; continue; }
+    sig += memo.id; sig += ':active';
+  }
+  return sig;
 }
 
 function updateCamera(delta) {
@@ -5447,9 +5345,9 @@ function applyFloorOnlyScaleIfNeeded(object, targetY) {
 function restObjectOnY(object, targetY) {
   applyFloorOnlyScaleIfNeeded(object, targetY);
   object.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(object);
-  if (!Number.isFinite(box.min.y)) return;
-  object.position.y += targetY - box.min.y;
+  TMP_BOX_3.setFromObject(object);
+  if (!Number.isFinite(TMP_BOX_3.min.y)) return;
+  object.position.y += targetY - TMP_BOX_3.min.y;
   object.updateMatrixWorld(true);
 }
 
@@ -5872,13 +5770,20 @@ function updatePhysics(delta) {
   const forceZ = STATE.tilt.z;
   const hasForce = Math.abs(forceX) > 0.0003 || Math.abs(forceZ) > 0.0003;
 
+  /* ── Build memo lookup map once per frame ── */
+  const memoMap = new Map();
+  for (let i = 0; i < STATE.memos.length; i++) {
+    const m = STATE.memos[i];
+    if (m && m.id) memoMap.set(m.id, m);
+  }
+
   /* ── Pre-compute separation forces between all active (non-locked) GLBs ── */
   const activeVisuals = [];
   STATE.visuals.forEach((visual) => {
     if (visual.kind !== 'asset' || !visual.object || !visual.phys) return;
     if (visual === STATE.grabbedVisual) return;
     if (visual.dropIntro) return;
-    const memo = visual.memoIds?.length ? STATE.memos.find((m) => m.id === visual.memoIds[0]) : null;
+    const memo = visual.memoIds?.length ? memoMap.get(visual.memoIds[0]) || null : null;
     if (isRecentPhysicsLockedMemo(memo)) return;
     activeVisuals.push(visual);
   });
@@ -5915,7 +5820,7 @@ function updatePhysics(delta) {
     if (visual.dropIntro) return;
 
     const p = visual.phys;
-    const memo = visual.memoIds?.length ? STATE.memos.find((m) => m.id === visual.memoIds[0]) : null;
+    const memo = visual.memoIds?.length ? memoMap.get(visual.memoIds[0]) || null : null;
     p.friction = getPhysicsFriction(memo);
 
     if (isRecentPhysicsLockedMemo(memo)) {
@@ -6001,10 +5906,11 @@ function setupInteraction() {
   const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   const intersectPoint = new THREE.Vector3();
   const pointerRay = new THREE.Raycaster();
+  const _ndcVec = new THREE.Vector2();
 
   function getNDC(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
-    return new THREE.Vector2(
+    return _ndcVec.set(
       ((clientX - rect.left) / rect.width) * 2 - 1,
       -((clientY - rect.top) / rect.height) * 2 + 1,
     );
@@ -6014,14 +5920,15 @@ function setupInteraction() {
     const ndc = getNDC(clientX, clientY);
     pointerRay.setFromCamera(ndc, STATE.camera);
 
-    const meshes = [];
-    STATE.visuals.forEach((v) => {
-      if (v.kind !== 'asset' || !v.object) return;
-      if (v.hoverProxy) meshes.push(v.hoverProxy);
-      v.object.traverse((child) => { if (child.isMesh) meshes.push(child); });
-    });
+    /* Use hover proxies for raycasting — they are enlarged bounding boxes designed for interaction */
+    const proxyMeshes = [];
+    for (let i = 0; i < STATE.visuals.length; i++) {
+      const v = STATE.visuals[i];
+      if (v.kind !== 'asset' || !v.object) continue;
+      if (v.hoverProxy) proxyMeshes.push(v.hoverProxy);
+    }
 
-    const hits = pointerRay.intersectObjects(meshes, false);
+    const hits = pointerRay.intersectObjects(proxyMeshes, false);
     if (!hits.length) return null;
 
     for (const hit of hits) {
