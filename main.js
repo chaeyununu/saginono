@@ -1598,7 +1598,13 @@ function setupUI() {
   });
 
   createLoadingOverlay();
+  syncMobileViewportHeight();
   window.addEventListener('resize', onResize);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', onResize);
+    window.visualViewport.addEventListener('scroll', onResize);
+  }
+  window.addEventListener('orientationchange', onResize);
   window.addEventListener('pointermove', onPointerMove);
   window.addEventListener('pointerleave', hideMemoHover);
   UI.sceneRoot.addEventListener('pointerleave', hideMemoHover);
@@ -5366,15 +5372,26 @@ function updateCamera(delta) {
   }
 }
 
+function syncMobileViewportHeight() {
+  const viewportHeight = window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight || 0;
+  if (!viewportHeight) return;
+  document.documentElement.style.setProperty('--mobile-app-vh', `${viewportHeight}px`);
+}
+
 function onResize() {
+  syncMobileViewportHeight();
   if (!STATE.camera || !STATE.renderer) return;
-  const width = UI.sceneRoot.clientWidth || window.innerWidth;
-  const height = UI.sceneRoot.clientHeight || window.innerHeight;
+  const viewportWidth = window.visualViewport?.width || window.innerWidth;
+  const viewportHeight = window.visualViewport?.height || window.innerHeight;
+  const width = UI.sceneRoot.clientWidth || viewportWidth;
+  const height = UI.sceneRoot.clientHeight || viewportHeight;
   const isMobile = width < 768;
   STATE.camera.fov = isMobile ? 54 : 43;
   STATE.camera.aspect = width / height;
   STATE.camera.updateProjectionMatrix();
   STATE.renderer.setSize(width, height);
+  STATE.renderer.domElement.style.width = '100%';
+  STATE.renderer.domElement.style.height = '100%';
   if (isMobile) {
     STATE.camera.position.set(-0.2, 7.6, 14.5);
   }
