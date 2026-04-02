@@ -2433,11 +2433,14 @@ body:has(.mic-badge.live) .compact-transcript-text {
   }
 }
 
-/* --- 2026-04-03 mobile-only bottom empty area fill --- */
+/* --- 2026-04-03 mobile-only bottom empty area color sync --- */
 @media (max-width: 768px) {
   html,
-  body {
-    background: linear-gradient(to bottom, #E8D8C3 0%, #EAD9C4 68%, #E6D7C2 100%) !important;
-    background-color: #EAD9C4 !important;
+  body,
+  .app-shell,
+  #scene-root,
+  .scene-root {
+    background: #EBD5BD !important;
+    background-color: #EBD5BD !important;
   }
 }
