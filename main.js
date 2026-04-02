@@ -12,10 +12,10 @@ const PHYSICS_FRICTION_OLD = 0.78;
 const PHYSICS_FRICTION_MID = 0.88;
 const PHYSICS_AGE_RECENT_HOURS = 72;
 const PHYSICS_AGE_OLD_DAYS = 3;
-const PHYSICS_TILT_FORCE = 0.14;
+const PHYSICS_TILT_FORCE = 0.16;
 const PHYSICS_TILT_SMOOTHING = 0.22;
 const PHYSICS_REST_THRESHOLD = 0.00032;
-const PHYSICS_MAX_VELOCITY = 2.8;
+const PHYSICS_MAX_VELOCITY = 3.2;
 const PHYSICS_THROW_MULTIPLIER = 0.032;
 const PHYSICS_THROW_FRICTION = 0.92;
 const PHYSICS_BOUNCE_FACTOR = 0.45;
@@ -75,8 +75,8 @@ const DESK_FRONT_RANGE_REDUCTION_RATIO = 0.92;
 const DESK_FRONT_EXTRA_REMAINING_REDUCTION_RATIO = 0.2;
 const DESK_BACK_RANGE_REDUCTION_RATIO = 0.9;
 const DESK_MIN_REMAINING_DEPTH = 0.12;
-const DESK_MOTION_FRONT_REDUCTION_RATIO = 0.36;
-const DESK_MOTION_BACK_REDUCTION_RATIO = 0.24;
+const DESK_MOTION_FRONT_REDUCTION_RATIO = 0.28;
+const DESK_MOTION_BACK_REDUCTION_RATIO = 0.22;
 const DESK_MOTION_SIDE_REDUCTION_RATIO = 0.74;
 const DESK_MOTION_MIN_WIDTH = 0.12;
 const DESK_MOTION_MIN_DEPTH = 0.12;
@@ -6107,9 +6107,9 @@ function updatePhysics(delta) {
       return;
     }
 
-    const speedBand = p.friction <= 0.8 ? 10.5 : p.friction <= 0.9 ? 4.4 : 0.72;
+    const speedBand = p.friction <= 0.8 ? 13.5 : p.friction <= 0.9 ? 5.6 : 0.78;
     const tiltScale = p.onDesk ? 0.56 : 1.0;
-    const accelMultiplier = (p.onDesk ? 13.5 : 28.0) * speedBand;
+    const accelMultiplier = (p.onDesk ? 16.0 : 32.0) * speedBand;
 
     if (hasForce) {
       p.vx += forceX * accelMultiplier * tiltScale;
@@ -6130,7 +6130,7 @@ function updatePhysics(delta) {
     p.vz *= p.friction;
 
     /* Clamp max velocity */
-    const maxVelocity = (p.onDesk ? PHYSICS_MAX_VELOCITY * 0.62 : PHYSICS_MAX_VELOCITY) * speedBand;
+    const maxVelocity = (p.onDesk ? PHYSICS_MAX_VELOCITY * 0.66 : PHYSICS_MAX_VELOCITY) * speedBand;
     const speed = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
     if (speed > maxVelocity) {
       const scale = maxVelocity / speed;
