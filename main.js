@@ -12,10 +12,10 @@ const PHYSICS_FRICTION_OLD = 0.78;
 const PHYSICS_FRICTION_MID = 0.88;
 const PHYSICS_AGE_RECENT_HOURS = 72;
 const PHYSICS_AGE_OLD_DAYS = 3;
-const PHYSICS_TILT_FORCE = 0.044;
+const PHYSICS_TILT_FORCE = 0.09;
 const PHYSICS_TILT_SMOOTHING = 0.22;
 const PHYSICS_REST_THRESHOLD = 0.0008;
-const PHYSICS_MAX_VELOCITY = 0.55;
+const PHYSICS_MAX_VELOCITY = 1.45;
 const PHYSICS_THROW_MULTIPLIER = 0.032;
 const PHYSICS_THROW_FRICTION = 0.92;
 const PHYSICS_BOUNCE_FACTOR = 0.45;
@@ -75,6 +75,10 @@ const DESK_FRONT_RANGE_REDUCTION_RATIO = 0.92;
 const DESK_FRONT_EXTRA_REMAINING_REDUCTION_RATIO = 0.2;
 const DESK_BACK_RANGE_REDUCTION_RATIO = 0.9;
 const DESK_MIN_REMAINING_DEPTH = 0.12;
+const DESK_MOTION_TOTAL_REDUCTION_RATIO = 0.6;
+const DESK_MOTION_SIDE_REDUCTION_RATIO = 0.56;
+const DESK_MOTION_MIN_WIDTH = 0.16;
+const DESK_MOTION_MIN_DEPTH = 0.12;
 
 const PREVIOUS_LAYOUT_CACHE_SLOT_MIGRATION_VERSION = 'non-desk-slot-baked-left-v2-right-tighten-floor-tumbler-inset-v5-floor-tumbler-bottom-right-extra-inset';
 const LAYOUT_CACHE_SLOT_MIGRATION_VERSION = 'non-desk-slot-baked-left-v2-right-tighten-floor-tumbler-inset-v7-floor-front-priority-v1-floor-tumbler-right-hard-inset-v2';
@@ -3002,6 +3006,25 @@ function getDeskSurfaceBounds() {
     minZ: -5.8,
     maxZ: -4.55,
   });
+}
+
+function getDeskMotionBounds() {
+  const bounds = getDeskSurfaceBounds();
+  if (!bounds) return bounds;
+
+  const width = bounds.maxX - bounds.minX;
+  const depth = bounds.maxZ - bounds.minZ;
+  if (!Number.isFinite(width) || !Number.isFinite(depth) || width <= 0 || depth <= 0) return bounds;
+
+  const sideInset = Math.min((width * DESK_MOTION_SIDE_REDUCTION_RATIO) * 0.5, Math.max(0, (width - DESK_MOTION_MIN_WIDTH) * 0.5));
+  const frontBackInset = Math.min((depth * DESK_MOTION_TOTAL_REDUCTION_RATIO) * 0.5, Math.max(0, (depth - DESK_MOTION_MIN_DEPTH) * 0.5));
+
+  return {
+    minX: bounds.minX + sideInset,
+    maxX: bounds.maxX - sideInset,
+    minZ: bounds.minZ + frontBackInset,
+    maxZ: bounds.maxZ - frontBackInset,
+  };
 }
 
 function getChairSurfaceBounds() {
@@ -6082,12 +6105,13 @@ function updatePhysics(delta) {
       return;
     }
 
-    /* Desk items don't respond to tilt as much */
-    const tiltScale = p.onDesk ? 0.15 : 1.0;
+    const speedBand = p.friction <= 0.8 ? 2.55 : p.friction <= 0.9 ? 1.75 : 1.12;
+    const tiltScale = p.onDesk ? 0.34 : 1.0;
+    const accelMultiplier = (p.onDesk ? 4.4 : 8.6) * speedBand;
 
     if (hasForce) {
-      p.vx += forceX * (1 - p.friction) * 3.0 * tiltScale;
-      p.vz += forceZ * (1 - p.friction) * 3.0 * tiltScale;
+      p.vx += forceX * accelMultiplier * tiltScale;
+      p.vz += forceZ * accelMultiplier * tiltScale;
       p.settled = false;
     }
 
@@ -6104,9 +6128,10 @@ function updatePhysics(delta) {
     p.vz *= p.friction;
 
     /* Clamp max velocity */
+    const maxVelocity = (p.onDesk ? PHYSICS_MAX_VELOCITY * 0.52 : PHYSICS_MAX_VELOCITY) * speedBand;
     const speed = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
-    if (speed > PHYSICS_MAX_VELOCITY) {
-      const scale = PHYSICS_MAX_VELOCITY / speed;
+    if (speed > maxVelocity) {
+      const scale = maxVelocity / speed;
       p.vx *= scale;
       p.vz *= scale;
     }
@@ -6125,12 +6150,22 @@ function updatePhysics(delta) {
     visual.object.position.x += p.vx;
     visual.object.position.z += p.vz;
 
-    /* Room bounds with bounce */
-    const b = PHYSICS_ROOM_BOUNDS;
-    if (visual.object.position.x < b.minX) { visual.object.position.x = b.minX; p.vx *= -PHYSICS_BOUNCE_FACTOR; }
-    if (visual.object.position.x > b.maxX) { visual.object.position.x = b.maxX; p.vx *= -PHYSICS_BOUNCE_FACTOR; }
-    if (visual.object.position.z < b.minZ) { visual.object.position.z = b.minZ; p.vz *= -PHYSICS_BOUNCE_FACTOR; }
-    if (visual.object.position.z > b.maxZ) { visual.object.position.z = b.maxZ; p.vz *= -PHYSICS_BOUNCE_FACTOR; }
+    if (p.onDesk) {
+      const deskMotionBounds = getDeskMotionBounds();
+      if (deskMotionBounds) {
+        if (visual.object.position.x < deskMotionBounds.minX) { visual.object.position.x = deskMotionBounds.minX; p.vx *= -PHYSICS_BOUNCE_FACTOR * 0.7; }
+        if (visual.object.position.x > deskMotionBounds.maxX) { visual.object.position.x = deskMotionBounds.maxX; p.vx *= -PHYSICS_BOUNCE_FACTOR * 0.7; }
+        if (visual.object.position.z < deskMotionBounds.minZ) { visual.object.position.z = deskMotionBounds.minZ; p.vz *= -PHYSICS_BOUNCE_FACTOR * 0.7; }
+        if (visual.object.position.z > deskMotionBounds.maxZ) { visual.object.position.z = deskMotionBounds.maxZ; p.vz *= -PHYSICS_BOUNCE_FACTOR * 0.7; }
+      }
+    } else {
+      /* Room bounds with bounce */
+      const b = PHYSICS_ROOM_BOUNDS;
+      if (visual.object.position.x < b.minX) { visual.object.position.x = b.minX; p.vx *= -PHYSICS_BOUNCE_FACTOR; }
+      if (visual.object.position.x > b.maxX) { visual.object.position.x = b.maxX; p.vx *= -PHYSICS_BOUNCE_FACTOR; }
+      if (visual.object.position.z < b.minZ) { visual.object.position.z = b.minZ; p.vz *= -PHYSICS_BOUNCE_FACTOR; }
+      if (visual.object.position.z > b.maxZ) { visual.object.position.z = b.maxZ; p.vz *= -PHYSICS_BOUNCE_FACTOR; }
+    }
 
     visual.object.updateMatrixWorld(true);
   });
