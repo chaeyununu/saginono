@@ -1,5 +1,4 @@
 :root {
-  --app-height: 100dvh;
   --background: #f6f2ed;
   --background-2: #efe9e2;
   --card: rgba(255, 253, 250, 0.88);
@@ -35,46 +34,15 @@ html, body {
   background: #f0ebe4;
 }
 
-@supports (height: 100dvh) {
-  :root {
-    --app-height: 100dvh;
-  }
-}
-
-
-html {
-  min-height: 100%;
-  min-height: -webkit-fill-available;
-  background: #f0ebe4;
-}
-
-body {
-  min-height: var(--app-height);
-  height: var(--app-height);
-  position: fixed;
-  inset: 0;
-  overscroll-behavior: none;
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
-  background: #f0ebe4;
-}
-
+body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
 button { font: inherit; border: 0; cursor: pointer; background: none; }
 button:disabled { cursor: not-allowed; }
 h1, h2, h3, p { margin: 0; }
 
-.app-shell {
-  position: relative;
-  width: 100%;
-  height: var(--app-height);
-  min-height: var(--app-height);
-  overflow: hidden;
-  background: #f0ebe4;
-}
+.app-shell { position: relative; width: 100%; height: 100%; overflow: hidden; }
 
 .scene-root, .scene-root canvas {
   position: absolute; inset: 0; width: 100%; height: 100%; display: block;
-  background: #f0ebe4;
 }
 
 .noise-layer {
@@ -1967,448 +1935,500 @@ div {
     cursor: default;
   }
 }
-/* === 2026-04-02 usability + flow polish (buttons kept intact) === */
-button:focus-visible {
-  outline: 2px solid rgba(74, 63, 50, 0.38);
-  outline-offset: 2px;
-}
 
-.entry-panel,
-.history-panel {
-  box-shadow:
-    0 18px 44px rgba(31, 22, 15, 0.12),
-    0 6px 18px rgba(31, 22, 15, 0.06) !important;
-  border-color: rgba(44, 36, 24, 0.09) !important;
-}
+/* ═══════════════════════════════════════════════
+   2026-04 DESIGN / USABILITY / FLOW UPGRADE
+   — 버튼 구조·권한 흐름 전혀 변경 없음
+   ═══════════════════════════════════════════════ */
 
-.entry-panel,
-.history-panel,
-.room-hud {
+/* ── 1. PANEL OPEN/CLOSE TRANSITIONS ── */
+/* entry-panel: slide up + fade */
+.entry-panel {
   transition:
-    opacity 220ms ease,
-    transform 260ms cubic-bezier(0.22, 1, 0.36, 1),
-    visibility 220ms ease,
-    filter 220ms ease;
+    opacity 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0ms 280ms !important;
+}
+
+.entry-panel:not(.hidden) {
+  opacity: 1 !important;
+  visibility: visible !important;
+  transform: translateY(0) !important;
+  transition:
+    opacity 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0ms 0ms !important;
 }
 
 .entry-panel.hidden {
-  display: grid !important;
   opacity: 0 !important;
   visibility: hidden !important;
   pointer-events: none !important;
-  transform: translateY(10px) scale(0.985) !important;
-  filter: blur(2px);
+  transform: translateY(10px) !important;
+  display: grid !important;
+}
+
+/* history-panel: slide down + fade */
+.history-panel {
+  transition:
+    opacity 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0ms 260ms !important;
+}
+
+.history-panel:not(.hidden) {
+  opacity: 1 !important;
+  visibility: visible !important;
+  transform: translateY(0) !important;
+  transition:
+    opacity 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0ms 0ms !important;
 }
 
 .history-panel.hidden {
-  display: grid !important;
   opacity: 0 !important;
   visibility: hidden !important;
   pointer-events: none !important;
-  transform: translateY(10px) scale(0.985) !important;
-  filter: blur(2px);
+  transform: translateY(8px) !important;
+  display: grid !important;
 }
 
-.entry-panel:not(.hidden),
-.history-panel:not(.hidden) {
-  opacity: 1;
-  visibility: visible;
-  transform: translateY(0) scale(1);
-  filter: blur(0);
+
+/* ── 2. PERMISSION MODAL ENTRANCE ── */
+#permission-modal {
+  transition: opacity 360ms ease !important;
 }
 
-.entry-panel {
-  width: min(348px, calc(100vw - 32px)) !important;
-  padding: 18px 16px 16px !important;
-  padding-top: 34px !important;
-  gap: 12px !important;
+#permission-modal .modal-panel {
+  animation: modalEntrance 480ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-.entry-panel > .icon-close-btn,
-.history-panel > .icon-close-btn {
-  top: 10px !important;
-  right: 10px !important;
-  width: 28px !important;
-  height: 28px !important;
-  background: rgba(255, 252, 247, 0.82) !important;
+@keyframes modalEntrance {
+  0% {
+    opacity: 0;
+    transform: scale(0.92) translateY(12px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
 }
 
-#selection-copy {
-  display: block !important;
-  font-size: 0.77rem !important;
-  line-height: 1.45 !important;
-  color: rgba(44, 36, 24, 0.68) !important;
-  margin-top: -2px !important;
-  padding: 0 2px !important;
+#permission-modal:not(.visible) {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: opacity 280ms ease !important;
 }
 
-.compact-chip-grid {
-  gap: 10px !important;
+#permission-modal:not(.visible) .modal-panel {
+  animation: none;
 }
 
-.compact-chip-grid .chip {
-  min-height: 54px !important;
+
+/* ── 3. RECORDING STATE FEEDBACK ── */
+@keyframes recordPulse {
+  0%, 100% { filter: brightness(1) drop-shadow(0 4px 8px rgba(28, 21, 14, 0.12)); }
+  50% { filter: brightness(1.04) drop-shadow(0 6px 16px rgba(180, 120, 50, 0.22)); }
 }
 
-#emotion-tone-wrap {
-  margin-top: -1px;
+#record-btn:not(:disabled):not([aria-disabled="true"]) {
+  /* ready state - subtle glow */
 }
 
-.compact-record-btn.primary-btn {
-  min-height: 62px !important;
-  height: 62px !important;
-  font-size: 0.98rem !important;
-  letter-spacing: -0.01em !important;
+/* When button says '중지' it's recording — apply pulse.
+   We use a class-based approach via the existing mic-badge state as indicator. */
+body:has(.mic-badge.live) #record-btn {
+  animation: recordPulse 1.6s ease-in-out infinite;
 }
 
-.compact-transcript-box,
-.transcript-box {
-  min-height: 108px !important;
-  display: flex !important;
-  align-items: flex-start !important;
-  padding: 14px 14px 13px !important;
-  border: 1px solid rgba(44, 36, 24, 0.08) !important;
-  background: rgba(255, 252, 247, 0.76) !important;
+body:has(.mic-badge.live) .compact-transcript-box {
+  border-color: rgba(180, 130, 60, 0.28) !important;
+  background: rgba(255, 248, 235, 0.72) !important;
+  transition: background 300ms ease, border-color 300ms ease;
 }
 
-.compact-transcript-text,
-.transcript-text {
-  width: 100%;
-  font-size: 0.88rem !important;
-  line-height: 1.6 !important;
-  color: rgba(44, 36, 24, 0.78) !important;
+body:has(.mic-badge.processing) #record-btn {
+  animation: none;
+  filter: brightness(0.97) saturate(0.92);
 }
 
-.room-hud {
-  left: 50% !important;
-  right: auto !important;
-  transform: translateX(-50%);
-  bottom: max(12px, env(safe-area-inset-bottom, 0px) + 8px) !important;
-  padding: 10px !important;
-  border-radius: 20px !important;
-  background: rgba(255, 252, 247, 0.72) !important;
-  border: 1px solid rgba(44, 36, 24, 0.08) !important;
+
+/* ── 4. TRANSCRIPT AREA POLISH ── */
+.compact-transcript-box {
+  transition: background 240ms ease, border-color 240ms ease !important;
+  min-height: 42px;
 }
 
-.room-hud .room-actions-compact {
-  gap: 8px !important;
+.compact-transcript-text {
+  transition: color 200ms ease;
 }
 
-#new-memo-btn.compact-dock-btn,
-#open-history-btn.compact-dock-btn {
-  margin: 0 !important;
-  min-width: 122px !important;
-  min-height: 58px !important;
-  height: 58px !important;
+/* Typing animation for transcript text */
+@keyframes transcriptBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
-.history-panel {
-  width: min(352px, calc(100vw - 32px)) !important;
-  max-height: min(78vh, calc(100vh - 32px)) !important;
-  padding: 16px 14px 14px !important;
-  padding-top: 36px !important;
-  gap: 12px !important;
+body:has(.mic-badge.live) .compact-transcript-text {
+  color: var(--foreground) !important;
 }
 
-.history-list {
-  gap: 10px !important;
-  padding-right: 6px !important;
-  max-height: calc(78vh - 54px) !important;
-}
 
-.history-summary-card,
-.empty-card,
+/* ── 5. HISTORY LOG CARDS MICRO-INTERACTIONS ── */
 .log-card {
-  border-radius: 18px !important;
-  border: 1px solid rgba(44, 36, 24, 0.07) !important;
-  background: rgba(255, 252, 247, 0.78) !important;
-  box-shadow: 0 8px 18px rgba(31, 22, 15, 0.04);
+  transition:
+    transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 200ms ease,
+    background 200ms ease !important;
 }
 
-.history-summary-card {
-  padding: 12px 13px !important;
-  display: grid;
-  gap: 6px;
+@media (hover: hover) {
+  .log-card:hover {
+    transform: translateY(-1px) !important;
+    box-shadow: 0 14px 28px rgba(32, 22, 12, 0.12) !important;
+  }
 }
 
-.history-summary-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+.log-card:active {
+  transform: translateY(1px) scale(0.995) !important;
+  transition-duration: 100ms !important;
 }
 
-.history-summary-top strong {
-  font-size: 0.9rem;
+/* Staggered card appearance in history */
+.history-list .log-card {
+  animation: cardSlideIn 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-.history-summary-top span,
-.history-summary-card p,
-.empty-card p,
-.log-visual-copy {
-  font-size: 0.76rem;
-  line-height: 1.5;
-  color: rgba(44, 36, 24, 0.62);
+.history-list .log-card:nth-child(1) { animation-delay: 0ms; }
+.history-list .log-card:nth-child(2) { animation-delay: 30ms; }
+.history-list .log-card:nth-child(3) { animation-delay: 55ms; }
+.history-list .log-card:nth-child(4) { animation-delay: 75ms; }
+.history-list .log-card:nth-child(5) { animation-delay: 90ms; }
+.history-list .log-card:nth-child(n+6) { animation-delay: 100ms; }
+
+@keyframes cardSlideIn {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
+
+/* ── 6. SMOOTH SCROLL ── */
+.history-list {
+  scroll-behavior: smooth !important;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Fade hint at scroll edges */
+.history-list {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0px,
+    black 6px,
+    black calc(100% - 12px),
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0px,
+    black 6px,
+    black calc(100% - 12px),
+    transparent 100%
+  );
+}
+
+/* Better scrollbar */
+.history-list::-webkit-scrollbar {
+  width: 5px !important;
+}
+
+.history-list::-webkit-scrollbar-thumb {
+  background: rgba(44, 36, 24, 0.14) !important;
+  border-radius: 999px !important;
+}
+
+.history-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(44, 36, 24, 0.22) !important;
+}
+
+
+/* ── 7. CATEGORY CHIP SELECTION SNAP ── */
+#category-grid .chip {
+  transition:
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 220ms ease,
+    opacity 220ms ease !important;
+}
+
+/* Dim unselected chips when one is active */
+#category-grid:has(.chip.active) .chip:not(.active) {
+  opacity: 0.68;
+  filter: saturate(0.85) brightness(0.98);
+}
+
+#category-grid:has(.chip.active) .chip:not(.active):hover {
+  opacity: 0.88;
+  filter: saturate(0.95) brightness(1);
+}
+
+
+/* ── 8. FOCUS-VISIBLE STATES (키보드 접근성) ── */
+.primary-btn:focus-visible,
+.ghost-btn:focus-visible,
+.detail-btn:focus-visible,
+.chip:focus-visible,
+.tone-chip:focus-visible,
+.icon-close-btn:focus-visible,
+.log-btn:focus-visible {
+  outline: 3px solid rgba(120, 90, 50, 0.5) !important;
+  outline-offset: 3px !important;
+}
+
+
+/* ── 9. LOADING OVERLAY UPGRADE ── */
+.app-loading-overlay {
+  background: rgba(246, 241, 235, 0.45) !important;
+  backdrop-filter: blur(12px) saturate(1.1) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(1.1) !important;
+  transition: opacity 300ms ease !important;
+}
+
+.app-loading-overlay:not(.visible) {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+
+/* ── 10. ROOM HUD DOCK ENTRANCE ── */
+.room-hud {
+  animation: hudSlideUp 520ms 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes hudSlideUp {
+  0% {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+
+/* ── 11. AMBIENT GLOW SUBTLE DRIFT ── */
+@keyframes ambientDriftA {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(6px, 4px) scale(1.04); }
+}
+
+@keyframes ambientDriftB {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(-5px, -3px) scale(1.03); }
+}
+
+.ambient-glow-a {
+  animation: ambientDriftA 18s ease-in-out infinite;
+}
+
+.ambient-glow-b {
+  animation: ambientDriftB 22s ease-in-out infinite;
+}
+
+
+/* ── 12. EMPTY STATE POLISH ── */
 .empty-card {
-  padding: 16px 14px !important;
+  text-align: center;
+  padding: 28px 20px !important;
+  opacity: 0.85;
 }
 
 .empty-card strong {
-  font-size: 0.94rem !important;
+  font-size: 0.96rem !important;
+  letter-spacing: -0.01em;
 }
 
-.log-card {
-  padding: 13px 12px 12px !important;
-  gap: 9px !important;
-}
 
-.log-title {
-  font-size: 0.92rem !important;
-}
-
-.log-text {
-  font-size: 0.87rem !important;
-  line-height: 1.58 !important;
-}
-
-.log-visual-copy {
-  margin-top: -2px;
-}
-
-.log-actions {
-  gap: 7px !important;
-}
-
-.backup-actions {
-  position: sticky;
-  bottom: 0;
-  padding: 8px 0 2px !important;
-  background: linear-gradient(to bottom, rgba(246, 242, 237, 0), rgba(246, 242, 237, 0.92) 26%, rgba(246, 242, 237, 0.98));
-}
-
-@media (max-width: 768px) {
-  .entry-panel,
-  .history-panel {
-    width: min(100vw - 24px, 360px) !important;
-  }
-
-  #new-memo-btn.compact-dock-btn,
-  #open-history-btn.compact-dock-btn {
-    min-width: 118px !important;
-    min-height: 54px !important;
-    height: 54px !important;
-  }
-}
-
-@media (max-width: 640px) {
-  .entry-panel,
-  .history-panel {
-    left: 12px !important;
-    right: 12px !important;
-    top: 12px !important;
-    width: auto !important;
-    max-height: calc(100vh - 24px) !important;
-  }
-
-  .entry-panel {
-    padding: 16px 14px 14px !important;
-    padding-top: 32px !important;
-  }
-
-  .history-list {
-    max-height: calc(100vh - 108px) !important;
-  }
-
-  .compact-chip-grid .chip {
-    min-height: 50px !important;
-    font-size: 0.86rem !important;
-  }
-
-  .compact-record-btn.primary-btn {
-    min-height: 58px !important;
-    height: 58px !important;
-  }
-
-  .compact-transcript-box,
-  .transcript-box {
-    min-height: 96px !important;
-  }
-
-  .room-hud {
-    width: calc(100vw - 24px) !important;
-    max-width: 360px;
-    padding: 8px !important;
-  }
-
-  .room-hud .room-actions-compact {
-    width: 100%;
-    display: grid !important;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px !important;
-  }
-
-  #new-memo-btn.compact-dock-btn,
-  #open-history-btn.compact-dock-btn {
-    width: 100% !important;
-    min-width: 0 !important;
-    min-height: 52px !important;
-    height: 52px !important;
-    font-size: 0.9rem !important;
-  }
-}
-
-/* === 2026-04-02 usability polish (permission flow untouched) === */
-.app-shell[data-panel="entry"] .room-hud,
-.app-shell[data-panel="history"] .room-hud {
-  opacity: 0.78;
-  transform: translateX(-50%) translateY(2px) scale(0.992);
-}
-
-.entry-panel,
-.history-panel {
-  overflow: hidden;
-}
-
+/* ── 13. GLASS PANEL SUBTLE LIGHT BORDER ── */
 .entry-panel::before,
 .history-panel::before {
-  display: block;
-  margin: 0 34px 2px 2px;
-  font-size: 0.74rem;
-  line-height: 1.2;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  color: rgba(44, 36, 24, 0.48);
-}
-
-.entry-panel::before {
-  content: "새 메모";
-}
-
-.history-panel::before {
-  content: "메모 기록";
-}
-
-#category-grid.compact-chip-grid {
-  display: grid !important;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px !important;
-}
-
-#category-grid.compact-chip-grid .chip:last-child:nth-child(odd) {
-  grid-column: 1 / -1;
-}
-
-#selection-copy {
-  background: rgba(255, 252, 247, 0.62);
-  border: 1px solid rgba(44, 36, 24, 0.06);
-  border-radius: 12px;
-  padding: 8px 10px !important;
-  margin-top: -1px !important;
-}
-
-.compact-record-btn.primary-btn {
-  position: relative;
-  overflow: hidden;
-}
-
-.compact-record-btn.primary-btn:not(:disabled) {
-  box-shadow:
-    0 14px 28px rgba(31, 22, 15, 0.12),
-    0 5px 12px rgba(31, 22, 15, 0.08) !important;
-}
-
-.compact-record-btn.primary-btn:disabled {
-  opacity: 0.52 !important;
-  filter: grayscale(0.08);
-}
-
-.compact-transcript-box,
-.transcript-box {
-  position: relative;
-}
-
-.compact-transcript-box::before,
-.transcript-box::before {
-  content: "미리보기";
+  content: "";
   position: absolute;
-  top: 10px;
-  right: 12px;
-  font-size: 0.69rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  color: rgba(44, 36, 24, 0.34);
-}
-
-.history-summary-card {
-  position: sticky;
   top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 10%,
+    rgba(255, 255, 255, 0.45) 30%,
+    rgba(255, 255, 255, 0.55) 50%,
+    rgba(255, 255, 255, 0.45) 70%,
+    transparent 90%
+  );
+  border-radius: inherit;
+  pointer-events: none;
   z-index: 1;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
 }
 
-.history-summary-stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
 
-.history-stat {
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  padding: 0 9px;
-  border-radius: 999px;
-  font-size: 0.73rem;
-  line-height: 1;
-  color: rgba(44, 36, 24, 0.68);
-  background: rgba(255, 252, 247, 0.9);
-  border: 1px solid rgba(44, 36, 24, 0.08);
-}
-
-.log-card {
-  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
-}
-
-.log-card:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 12px 26px rgba(31, 22, 15, 0.06);
-  border-color: rgba(44, 36, 24, 0.1) !important;
-}
-
-.log-title-wrap {
-  display: grid;
-  gap: 6px;
-}
-
-.log-chip-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.log-text {
-  word-break: break-word;
-}
-
-.backup-actions {
-  margin-top: 2px;
-}
-
-@media (max-width: 640px) {
-  .app-shell[data-panel="entry"] .room-hud,
-  .app-shell[data-panel="history"] .room-hud {
-    opacity: 0.72;
+/* ── 14. REDUCED MOTION ── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 
-  #selection-copy {
-    font-size: 0.75rem !important;
+  .entry-panel.hidden,
+  .history-panel.hidden {
+    display: none !important;
+  }
+
+  .ambient-glow-a,
+  .ambient-glow-b {
+    animation: none !important;
+  }
+}
+
+
+/* ── 15. DARK MODE HINT (시스템 다크모드 시 미세조정) ── */
+@media (prefers-color-scheme: dark) {
+  .entry-panel,
+  .history-panel {
+    background: linear-gradient(180deg, rgba(42, 36, 28, 0.82) 0%, rgba(36, 30, 22, 0.76) 100%) !important;
+    border-color: rgba(255, 240, 210, 0.1) !important;
   }
 
   .entry-panel::before,
   .history-panel::before {
-    font-size: 0.72rem;
+    background: linear-gradient(
+      90deg,
+      transparent 10%,
+      rgba(255, 255, 255, 0.06) 50%,
+      transparent 90%
+    );
+  }
+
+  .log-card,
+  .empty-card {
+    background: rgba(50, 42, 32, 0.65) !important;
+    border-color: rgba(255, 240, 210, 0.08) !important;
+  }
+
+  .compact-transcript-box {
+    background: rgba(50, 42, 32, 0.55) !important;
+    border-color: rgba(255, 240, 210, 0.08) !important;
+  }
+
+  .compact-transcript-text {
+    color: rgba(240, 230, 216, 0.7) !important;
+  }
+}
+
+
+/* ── 16. SAFE AREA / NOTCH AWARENESS ── */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .room-hud {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .entry-panel,
+  .history-panel {
+    padding-top: max(var(--entry-pt, 24px), env(safe-area-inset-top, 0px)) !important;
+  }
+}
+
+
+/* ── 17. LOG CARD DATE SUBTLE STYLE ── */
+.log-chip {
+  font-size: 0.7rem !important;
+  letter-spacing: 0.02em;
+  opacity: 0.72;
+}
+
+.log-text {
+  font-size: 0.88rem !important;
+  line-height: 1.55 !important;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+
+/* ── 18. ENTRY PANEL CONTENT STAGGER ── */
+.entry-panel:not(.hidden) > * {
+  animation: entryChildFade 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.entry-panel:not(.hidden) > *:nth-child(1) { animation-delay: 40ms; }
+.entry-panel:not(.hidden) > *:nth-child(2) { animation-delay: 80ms; }
+.entry-panel:not(.hidden) > *:nth-child(3) { animation-delay: 110ms; }
+.entry-panel:not(.hidden) > *:nth-child(4) { animation-delay: 140ms; }
+.entry-panel:not(.hidden) > *:nth-child(5) { animation-delay: 165ms; }
+.entry-panel:not(.hidden) > *:nth-child(n+6) { animation-delay: 185ms; }
+
+@keyframes entryChildFade {
+  0% {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+
+/* ── 19. BETTER TOUCH TARGET SIZING ── */
+@media (hover: none) and (pointer: coarse) {
+  .icon-close-btn {
+    min-width: 44px !important;
+    min-height: 44px !important;
+  }
+
+  .log-btn {
+    min-height: 48px !important;
+  }
+}
+
+/* --- 2026-04-02 mobile-only micro adjust: lower dock slightly, add tiny top space above history close --- */
+@media (max-width: 768px) {
+  html,
+  body,
+  .app-shell {
+    min-height: 100dvh;
+    height: 100dvh;
+  }
+
+  .room-hud {
+    bottom: 8px !important;
+  }
+
+  #history-panel > .history-head > .icon-close-btn,
+  #history-panel > .minimal-panel-head > .icon-close-btn,
+  #close-history-btn.icon-close-btn {
+    top: 12px !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .room-hud {
+    bottom: 6px !important;
+  }
+
+  #history-panel > .history-head > .icon-close-btn,
+  #history-panel > .minimal-panel-head > .icon-close-btn,
+  #close-history-btn.icon-close-btn {
+    top: 13px !important;
   }
 }
