@@ -71,7 +71,7 @@ const DESK_TOP_ITEM_WORLD_COMP = {
   z: 0,
 };
 
-const DESK_FRONT_RANGE_REDUCTION_RATIO = 0.45;
+const DESK_FRONT_RANGE_REDUCTION_RATIO = 0.8;
 
 const PREVIOUS_LAYOUT_CACHE_SLOT_MIGRATION_VERSION = 'non-desk-slot-baked-left-v2-right-tighten-floor-tumbler-inset-v5-floor-tumbler-bottom-right-extra-inset';
 const LAYOUT_CACHE_SLOT_MIGRATION_VERSION = 'non-desk-slot-baked-left-v2-right-tighten-floor-tumbler-inset-v7-floor-front-priority-v1-floor-tumbler-right-hard-inset-v2';
