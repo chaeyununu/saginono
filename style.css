@@ -2477,3 +2477,63 @@ body:has(.mic-badge.live) .compact-transcript-text {
     display: block;
   }
 }
+
+
+/* --- 2026-04-03 mobile Google app recommendation + tighter entry top spacing --- */
+.browser-recommendation-modal {
+  z-index: 80;
+}
+
+.browser-recommendation-panel {
+  gap: 14px;
+}
+
+.browser-recommendation-copy {
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.browser-recommendation-actions {
+  justify-content: flex-end;
+}
+
+#dismiss-browser-recommendation {
+  min-width: 108px;
+}
+
+.entry-panel {
+  padding-top: 18px !important;
+}
+
+.entry-panel > .icon-close-btn {
+  top: 1px !important;
+  right: 4px !important;
+}
+
+@media (max-width: 768px) {
+  .entry-panel {
+    padding-top: 17px !important;
+  }
+
+  .entry-panel > .icon-close-btn {
+    top: 0px !important;
+    right: 4px !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .entry-panel {
+    padding-top: 16px !important;
+  }
+
+  .entry-panel > .icon-close-btn {
+    top: 0px !important;
+    right: 3px !important;
+  }
+
+  .browser-recommendation-panel {
+    width: min(320px, calc(100vw - 28px));
+    padding: 18px;
+  }
+}
