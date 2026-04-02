@@ -1935,223 +1935,509 @@ div {
     cursor: default;
   }
 }
-/* --- 2026-04-03 phone-only fix: full-screen new memo + hide dock under panel + more room for history close --- */
-@media (max-width: 640px) {
-  .entry-panel {
-    z-index: 120 !important;
-    left: 8px !important;
-    right: 8px !important;
-    top: 8px !important;
-    bottom: 8px !important;
-    width: auto !important;
-    max-height: none !important;
-    height: calc(100dvh - 16px) !important;
-    min-height: calc(100dvh - 16px) !important;
-    padding: 24px 12px 16px !important;
-    padding-top: 24px !important;
-    overflow-y: auto !important;
-    overscroll-behavior: contain;
-    align-content: start !important;
-    background: linear-gradient(180deg, rgba(255, 250, 242, 0.94) 0%, rgba(246, 236, 222, 0.92) 100%) !important;
+
+/* ═══════════════════════════════════════════════
+   2026-04 DESIGN / USABILITY / FLOW UPGRADE
+   — 버튼 구조·권한 흐름 전혀 변경 없음
+   ═══════════════════════════════════════════════ */
+
+/* ── 1. PANEL OPEN/CLOSE TRANSITIONS ── */
+/* entry-panel: slide up + fade */
+.entry-panel {
+  transition:
+    opacity 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0ms 280ms !important;
+}
+
+.entry-panel:not(.hidden) {
+  opacity: 1 !important;
+  visibility: visible !important;
+  transform: translateY(0) !important;
+  transition:
+    opacity 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0ms 0ms !important;
+}
+
+.entry-panel.hidden {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transform: translateY(10px) !important;
+  display: grid !important;
+}
+
+/* history-panel: slide down + fade */
+.history-panel {
+  transition:
+    opacity 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0ms 260ms !important;
+}
+
+.history-panel:not(.hidden) {
+  opacity: 1 !important;
+  visibility: visible !important;
+  transform: translateY(0) !important;
+  transition:
+    opacity 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0ms 0ms !important;
+}
+
+.history-panel.hidden {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transform: translateY(8px) !important;
+  display: grid !important;
+}
+
+
+/* ── 2. PERMISSION MODAL ENTRANCE ── */
+#permission-modal {
+  transition: opacity 360ms ease !important;
+}
+
+#permission-modal .modal-panel {
+  animation: modalEntrance 480ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes modalEntrance {
+  0% {
+    opacity: 0;
+    transform: scale(0.92) translateY(12px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+#permission-modal:not(.visible) {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: opacity 280ms ease !important;
+}
+
+#permission-modal:not(.visible) .modal-panel {
+  animation: none;
+}
+
+
+/* ── 3. RECORDING STATE FEEDBACK ── */
+@keyframes recordPulse {
+  0%, 100% { filter: brightness(1) drop-shadow(0 4px 8px rgba(28, 21, 14, 0.12)); }
+  50% { filter: brightness(1.04) drop-shadow(0 6px 16px rgba(180, 120, 50, 0.22)); }
+}
+
+#record-btn:not(:disabled):not([aria-disabled="true"]) {
+  /* ready state - subtle glow */
+}
+
+/* When button says '중지' it's recording — apply pulse.
+   We use a class-based approach via the existing mic-badge state as indicator. */
+body:has(.mic-badge.live) #record-btn {
+  animation: recordPulse 1.6s ease-in-out infinite;
+}
+
+body:has(.mic-badge.live) .compact-transcript-box {
+  border-color: rgba(180, 130, 60, 0.28) !important;
+  background: rgba(255, 248, 235, 0.72) !important;
+  transition: background 300ms ease, border-color 300ms ease;
+}
+
+body:has(.mic-badge.processing) #record-btn {
+  animation: none;
+  filter: brightness(0.97) saturate(0.92);
+}
+
+
+/* ── 4. TRANSCRIPT AREA POLISH ── */
+.compact-transcript-box {
+  transition: background 240ms ease, border-color 240ms ease !important;
+  min-height: 42px;
+}
+
+.compact-transcript-text {
+  transition: color 200ms ease;
+}
+
+/* Typing animation for transcript text */
+@keyframes transcriptBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+body:has(.mic-badge.live) .compact-transcript-text {
+  color: var(--foreground) !important;
+}
+
+
+/* ── 5. HISTORY LOG CARDS MICRO-INTERACTIONS ── */
+.log-card {
+  transition:
+    transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 200ms ease,
+    background 200ms ease !important;
+}
+
+@media (hover: hover) {
+  .log-card:hover {
+    transform: translateY(-1px) !important;
+    box-shadow: 0 14px 28px rgba(32, 22, 12, 0.12) !important;
+  }
+}
+
+.log-card:active {
+  transform: translateY(1px) scale(0.995) !important;
+  transition-duration: 100ms !important;
+}
+
+/* Staggered card appearance in history */
+.history-list .log-card {
+  animation: cardSlideIn 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.history-list .log-card:nth-child(1) { animation-delay: 0ms; }
+.history-list .log-card:nth-child(2) { animation-delay: 30ms; }
+.history-list .log-card:nth-child(3) { animation-delay: 55ms; }
+.history-list .log-card:nth-child(4) { animation-delay: 75ms; }
+.history-list .log-card:nth-child(5) { animation-delay: 90ms; }
+.history-list .log-card:nth-child(n+6) { animation-delay: 100ms; }
+
+@keyframes cardSlideIn {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+
+/* ── 6. SMOOTH SCROLL ── */
+.history-list {
+  scroll-behavior: smooth !important;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Fade hint at scroll edges */
+.history-list {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0px,
+    black 6px,
+    black calc(100% - 12px),
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0px,
+    black 6px,
+    black calc(100% - 12px),
+    transparent 100%
+  );
+}
+
+/* Better scrollbar */
+.history-list::-webkit-scrollbar {
+  width: 5px !important;
+}
+
+.history-list::-webkit-scrollbar-thumb {
+  background: rgba(44, 36, 24, 0.14) !important;
+  border-radius: 999px !important;
+}
+
+.history-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(44, 36, 24, 0.22) !important;
+}
+
+
+/* ── 7. CATEGORY CHIP SELECTION SNAP ── */
+#category-grid .chip {
+  transition:
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 220ms ease,
+    opacity 220ms ease !important;
+}
+
+/* Dim unselected chips when one is active */
+#category-grid:has(.chip.active) .chip:not(.active) {
+  opacity: 0.68;
+  filter: saturate(0.85) brightness(0.98);
+}
+
+#category-grid:has(.chip.active) .chip:not(.active):hover {
+  opacity: 0.88;
+  filter: saturate(0.95) brightness(1);
+}
+
+
+/* ── 8. FOCUS-VISIBLE STATES (키보드 접근성) ── */
+.primary-btn:focus-visible,
+.ghost-btn:focus-visible,
+.detail-btn:focus-visible,
+.chip:focus-visible,
+.tone-chip:focus-visible,
+.icon-close-btn:focus-visible,
+.log-btn:focus-visible {
+  outline: 3px solid rgba(120, 90, 50, 0.5) !important;
+  outline-offset: 3px !important;
+}
+
+
+/* ── 9. LOADING OVERLAY UPGRADE ── */
+.app-loading-overlay {
+  background: rgba(246, 241, 235, 0.45) !important;
+  backdrop-filter: blur(12px) saturate(1.1) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(1.1) !important;
+  transition: opacity 300ms ease !important;
+}
+
+.app-loading-overlay:not(.visible) {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+
+/* ── 10. ROOM HUD DOCK ENTRANCE ── */
+.room-hud {
+  animation: hudSlideUp 520ms 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes hudSlideUp {
+  0% {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+
+/* ── 11. AMBIENT GLOW SUBTLE DRIFT ── */
+@keyframes ambientDriftA {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(6px, 4px) scale(1.04); }
+}
+
+@keyframes ambientDriftB {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(-5px, -3px) scale(1.03); }
+}
+
+.ambient-glow-a {
+  animation: ambientDriftA 18s ease-in-out infinite;
+}
+
+.ambient-glow-b {
+  animation: ambientDriftB 22s ease-in-out infinite;
+}
+
+
+/* ── 12. EMPTY STATE POLISH ── */
+.empty-card {
+  text-align: center;
+  padding: 28px 20px !important;
+  opacity: 0.85;
+}
+
+.empty-card strong {
+  font-size: 0.96rem !important;
+  letter-spacing: -0.01em;
+}
+
+
+/* ── 13. GLASS PANEL SUBTLE LIGHT BORDER ── */
+.entry-panel::before,
+.history-panel::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 10%,
+    rgba(255, 255, 255, 0.45) 30%,
+    rgba(255, 255, 255, 0.55) 50%,
+    rgba(255, 255, 255, 0.45) 70%,
+    transparent 90%
+  );
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 1;
+}
+
+
+/* ── 14. REDUCED MOTION ── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 
-  .entry-panel > .icon-close-btn {
-    top: 6px !important;
-    right: 6px !important;
+  .entry-panel.hidden,
+  .history-panel.hidden {
+    display: none !important;
   }
 
-  #category-grid.compact-chip-grid,
-  #category-grid {
-    gap: 8px !important;
+  .ambient-glow-a,
+  .ambient-glow-b {
+    animation: none !important;
+  }
+}
+
+
+/* ── 15. DARK MODE HINT (시스템 다크모드 시 미세조정) ── */
+@media (prefers-color-scheme: dark) {
+  .entry-panel,
+  .history-panel {
+    background: linear-gradient(180deg, rgba(42, 36, 28, 0.82) 0%, rgba(36, 30, 22, 0.76) 100%) !important;
+    border-color: rgba(255, 240, 210, 0.1) !important;
   }
 
-  #emotion-tone-wrap {
-    margin-top: 2px !important;
-    margin-bottom: 4px !important;
+  .entry-panel::before,
+  .history-panel::before {
+    background: linear-gradient(
+      90deg,
+      transparent 10%,
+      rgba(255, 255, 255, 0.06) 50%,
+      transparent 90%
+    );
   }
 
-  #emotion-tone-wrap .micro-tone-grid {
-    gap: 8px !important;
-  }
-
-  #emotion-tone-wrap .tone-chip,
-  #emotion-tone-wrap .micro-chip {
-    min-width: 84px !important;
-    width: 84px !important;
-    min-height: 50px !important;
-    height: 50px !important;
-    font-size: 0.9rem !important;
-  }
-
-  .compact-record-btn {
-    min-height: 58px !important;
-    height: 58px !important;
+  .log-card,
+  .empty-card {
+    background: rgba(50, 42, 32, 0.65) !important;
+    border-color: rgba(255, 240, 210, 0.08) !important;
   }
 
   .compact-transcript-box {
-    min-height: 108px !important;
-    padding: 14px 12px !important;
+    background: rgba(50, 42, 32, 0.55) !important;
+    border-color: rgba(255, 240, 210, 0.08) !important;
   }
 
   .compact-transcript-text {
-    min-height: 72px !important;
-    line-height: 1.52 !important;
-  }
-
-  .app-shell:has(#entry-panel:not(.hidden)) .room-hud {
-    opacity: 0 !important;
-    visibility: hidden !important;
-    pointer-events: none !important;
-  }
-
-  .history-panel {
-    z-index: 121 !important;
-    padding-top: 18px !important;
-  }
-
-  .history-panel .history-head,
-  .history-panel .minimal-panel-head {
-    min-height: 18px !important;
-    height: 18px !important;
-  }
-
-  #close-history-btn.icon-close-btn {
-    top: 8px !important;
-    right: 6px !important;
+    color: rgba(240, 230, 216, 0.7) !important;
   }
 }
 
 
-/* --- 2026-04-03 phone-only bottom blend + Google app notice --- */
-@media (max-width: 640px) {
+/* ── 16. SAFE AREA / NOTCH AWARENESS ── */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .room-hud {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .entry-panel,
+  .history-panel {
+    padding-top: max(var(--entry-pt, 24px), env(safe-area-inset-top, 0px)) !important;
+  }
+}
+
+
+/* ── 17. LOG CARD DATE SUBTLE STYLE ── */
+.log-chip {
+  font-size: 0.7rem !important;
+  letter-spacing: 0.02em;
+  opacity: 0.72;
+}
+
+.log-text {
+  font-size: 0.88rem !important;
+  line-height: 1.55 !important;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+
+/* ── 18. ENTRY PANEL CONTENT STAGGER ── */
+.entry-panel:not(.hidden) > * {
+  animation: entryChildFade 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.entry-panel:not(.hidden) > *:nth-child(1) { animation-delay: 40ms; }
+.entry-panel:not(.hidden) > *:nth-child(2) { animation-delay: 80ms; }
+.entry-panel:not(.hidden) > *:nth-child(3) { animation-delay: 110ms; }
+.entry-panel:not(.hidden) > *:nth-child(4) { animation-delay: 140ms; }
+.entry-panel:not(.hidden) > *:nth-child(5) { animation-delay: 165ms; }
+.entry-panel:not(.hidden) > *:nth-child(n+6) { animation-delay: 185ms; }
+
+@keyframes entryChildFade {
+  0% {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+
+/* ── 19. BETTER TOUCH TARGET SIZING ── */
+@media (hover: none) and (pointer: coarse) {
+  .icon-close-btn {
+    min-width: 44px !important;
+    min-height: 44px !important;
+  }
+
+  .log-btn {
+    min-height: 48px !important;
+  }
+}
+
+/* --- 2026-04-02 mobile-only micro adjust: lower dock slightly, add tiny top space above history close --- */
+@media (max-width: 768px) {
   html,
   body,
   .app-shell {
-    min-height: 100svh;
-    height: 100svh;
-  }
-
-  @supports (height: 100dvh) {
-    html,
-    body,
-    .app-shell {
-      min-height: 100dvh;
-      height: 100dvh;
-    }
-  }
-
-  .app-shell::after {
-    content: "";
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: calc(env(safe-area-inset-bottom, 0px) * -1);
-    height: calc(224px + env(safe-area-inset-bottom, 0px));
-    pointer-events: none;
-    z-index: 14;
-    background:
-      linear-gradient(
-        180deg,
-        rgba(232, 216, 195, 0) 0%,
-        rgba(232, 216, 195, 0.02) 28%,
-        rgba(232, 216, 195, 0.10) 46%,
-        rgba(232, 216, 195, 0.28) 64%,
-        rgba(232, 216, 195, 0.56) 82%,
-        rgba(232, 216, 195, 0.9) 100%
-      );
+    min-height: 100dvh;
+    height: 100dvh;
   }
 
   .room-hud {
-    z-index: 16;
-    bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    bottom: 8px !important;
   }
 
-  .history-panel {
-    padding-top: 22px !important;
-  }
-
-  .history-panel .history-head,
-  .history-panel .minimal-panel-head {
-    min-height: 20px !important;
-    height: 20px !important;
-  }
-
+  #history-panel > .history-head > .icon-close-btn,
+  #history-panel > .minimal-panel-head > .icon-close-btn,
   #close-history-btn.icon-close-btn {
-    top: 10px !important;
-    right: 6px !important;
+    top: 12px !important;
   }
-}
-
-.google-app-browser-notice {
-  position: absolute;
-  left: 12px;
-  right: 12px;
-  top: max(12px, calc(env(safe-area-inset-top, 0px) + 12px));
-  z-index: 140;
-  display: flex;
-  justify-content: center;
-  pointer-events: none;
-}
-
-.google-app-browser-card {
-  width: min(420px, 100%);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
-  border-radius: 18px;
-  color: #1f160f;
-  background: rgba(255, 250, 242, 0.94);
-  border: 1px solid rgba(72, 56, 40, 0.14);
-  box-shadow: 0 12px 26px rgba(34, 24, 14, 0.14);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  pointer-events: auto;
-}
-
-.google-app-browser-copy {
-  flex: 1 1 auto;
-  font-size: 0.86rem;
-  line-height: 1.42;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-
-.google-app-browser-close {
-  flex: 0 0 auto;
-  min-width: 56px;
-  height: 40px;
-  padding: 0 12px;
-  border-radius: 12px;
-  border: 1px solid rgba(72, 56, 40, 0.12);
-  background: rgba(255, 255, 255, 0.7);
-  color: #1f160f;
-  font-size: 0.82rem;
-  font-weight: 700;
 }
 
 @media (max-width: 640px) {
-  .google-app-browser-notice {
-    left: 10px;
-    right: 10px;
-    top: max(10px, calc(env(safe-area-inset-top, 0px) + 10px));
+  .room-hud {
+    bottom: 6px !important;
   }
 
-  .google-app-browser-card {
-    gap: 8px;
-    padding: 11px 12px;
-    border-radius: 16px;
+  #history-panel > .history-head > .icon-close-btn,
+  #history-panel > .minimal-panel-head > .icon-close-btn,
+  #close-history-btn.icon-close-btn {
+    top: 13px !important;
   }
+}
 
-  .google-app-browser-copy {
-    font-size: 0.8rem;
-    line-height: 1.36;
-  }
-
-  .google-app-browser-close {
-    min-width: 50px;
-    height: 36px;
-    padding: 0 10px;
-    font-size: 0.78rem;
+/* --- 2026-04-03 mobile-only bottom empty area fill --- */
+@media (max-width: 768px) {
+  html,
+  body {
+    background: linear-gradient(to bottom, #E8D8C3 0%, #EAD9C4 68%, #E6D7C2 100%) !important;
+    background-color: #EAD9C4 !important;
   }
 }
