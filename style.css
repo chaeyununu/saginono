@@ -2401,17 +2401,43 @@ body:has(.mic-badge.live) .compact-transcript-text {
   }
 }
 
-/* --- 2026-04-02 mobile-only micro adjust: lower dock slightly, add tiny top space above history close --- */
+/* --- 2026-04-02 mobile viewport gap fix: keep scene/canvas filling mobile visual viewport --- */
+:root {
+  --mobile-app-vh: 100vh;
+}
+
 @media (max-width: 768px) {
   html,
   body,
+  #app,
   .app-shell {
-    min-height: 100dvh;
-    height: 100dvh;
+    min-height: var(--mobile-app-vh) !important;
+    height: var(--mobile-app-vh) !important;
+    background: #EBD5BD !important;
+    background-color: #EBD5BD !important;
+  }
+
+  #app,
+  .app-shell {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    overflow: hidden;
+  }
+
+  #scene-root,
+  .scene-root,
+  .scene-root canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    background: #EBD5BD !important;
+    background-color: #EBD5BD !important;
   }
 
   .room-hud {
-    bottom: 8px !important;
+    bottom: max(8px, env(safe-area-inset-bottom, 0px)) !important;
   }
 
   #history-panel > .history-head > .icon-close-btn,
@@ -2423,24 +2449,12 @@ body:has(.mic-badge.live) .compact-transcript-text {
 
 @media (max-width: 640px) {
   .room-hud {
-    bottom: 6px !important;
+    bottom: max(6px, env(safe-area-inset-bottom, 0px)) !important;
   }
 
   #history-panel > .history-head > .icon-close-btn,
   #history-panel > .minimal-panel-head > .icon-close-btn,
   #close-history-btn.icon-close-btn {
     top: 13px !important;
-  }
-}
-
-/* --- 2026-04-03 mobile-only bottom empty area color sync --- */
-@media (max-width: 768px) {
-  html,
-  body,
-  .app-shell,
-  #scene-root,
-  .scene-root {
-    background: #EBD5BD !important;
-    background-color: #EBD5BD !important;
   }
 }
