@@ -1474,6 +1474,33 @@ function setupButtonSoundUI() {
 }
 
 
+
+function getViewportSize() {
+  const vv = window.visualViewport;
+  if (
+    vv &&
+    Number.isFinite(vv.width) &&
+    Number.isFinite(vv.height) &&
+    vv.width > 0 &&
+    vv.height > 0
+  ) {
+    return {
+      width: Math.round(vv.width),
+      height: Math.round(vv.height),
+    };
+  }
+
+  return {
+    width: window.innerWidth || document.documentElement.clientWidth || 1,
+    height: window.innerHeight || document.documentElement.clientHeight || 1,
+  };
+}
+
+function syncAppViewportHeight() {
+  const { height } = getViewportSize();
+  document.documentElement.style.setProperty('--app-vh', `${height}px`);
+}
+
 init();
 
 async function init() {
@@ -1488,6 +1515,7 @@ async function init() {
   setupUI();
   renderCategoryChips();
   syncSelectionUI();
+  syncAppViewportHeight();
   setupScene();
 
   if (shouldUseDeskFirstLoading()) {
@@ -1599,6 +1627,11 @@ function setupUI() {
 
   createLoadingOverlay();
   window.addEventListener('resize', onResize);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', onResize);
+    window.visualViewport.addEventListener('scroll', onResize);
+  }
+  window.addEventListener('orientationchange', onResize);
   window.addEventListener('pointermove', onPointerMove);
   window.addEventListener('pointerleave', hideMemoHover);
   UI.sceneRoot.addEventListener('pointerleave', hideMemoHover);
@@ -2009,8 +2042,7 @@ function updateRoomCopy(memo) {
 }
 
 function setupScene() {
-  const width = UI.sceneRoot.clientWidth || window.innerWidth;
-  const height = UI.sceneRoot.clientHeight || window.innerHeight;
+  const { width, height } = getViewportSize();
   const isMobile = width < 768;
 
   const roomColor = 0xf6f1eb;
@@ -2020,7 +2052,7 @@ function setupScene() {
   STATE.scene.fog = new THREE.FogExp2(roomColor, 0.0018);
 
   const fov = isMobile ? 50 : 43;
-  STATE.camera = new THREE.PerspectiveCamera(fov, width / height, 0.1, 100);
+  STATE.camera = new THREE.PerspectiveCamera(fov, width / Math.max(height, 1), 0.1, 100);
   if (isMobile) {
     STATE.camera.position.set(-0.2, 7.2, 13.2);
     STATE.camera.lookAt(-0.2, 1.0, -2.2);
@@ -5368,15 +5400,16 @@ function updateCamera(delta) {
 
 function onResize() {
   if (!STATE.camera || !STATE.renderer) return;
-  const width = UI.sceneRoot.clientWidth || window.innerWidth;
-  const height = UI.sceneRoot.clientHeight || window.innerHeight;
+  syncAppViewportHeight();
+  const { width, height } = getViewportSize();
   const isMobile = width < 768;
   STATE.camera.fov = isMobile ? 50 : 43;
-  STATE.camera.aspect = width / height;
+  STATE.camera.aspect = width / Math.max(height, 1);
   STATE.camera.updateProjectionMatrix();
-  STATE.renderer.setSize(width, height);
+  STATE.renderer.setSize(width, height, false);
   if (isMobile) {
     STATE.camera.position.set(-0.2, 7.2, 13.2);
+    STATE.camera.lookAt(-0.2, 1.0, -2.2);
   }
 }
 
