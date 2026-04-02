@@ -28,6 +28,7 @@ const VELOCITY_HISTORY_SIZE = 6;
 const IDB_DB_NAME = 'mind-room-db';
 const IDB_STORE_NAME = 'app-data';
 const IDB_DB_VERSION = 1;
+const GOOGLE_BROWSER_PROMPT_SESSION_KEY = 'mind-room-google-browser-prompt-dismissed-v1';
 
 const SILENCE_MS = 1800;
 const SPEECH_FINALIZE_GRACE_MS = 240;
@@ -961,6 +962,8 @@ const UI = {
   appShell: document.getElementById('app'),
   sceneRoot: document.getElementById('scene-root'),
   permissionModal: document.getElementById('permission-modal'),
+  browserRecommendationModal: document.getElementById('browser-recommendation-modal'),
+  dismissBrowserRecommendationBtn: document.getElementById('dismiss-browser-recommendation'),
   allowMic: document.getElementById('allow-mic'),
   entryPanel: document.getElementById('entry-panel'),
   categoryGrid: document.getElementById('category-grid'),
@@ -1028,6 +1031,7 @@ const STATE = {
   visualCheckElapsed: 0,
   pendingVisualRebuild: false,
   appReady: false,
+  browserRecommendationDismissed: false,
   loadingOverlay: null,
   nonDeskAssetsReady: false,
   remainingAssetLoadPromise: null,
@@ -1501,6 +1505,58 @@ function syncAppViewportHeight() {
   document.documentElement.style.setProperty('--app-vh', `${height}px`);
 }
 
+
+function isMobileGoogleInAppBrowser() {
+  const ua = navigator.userAgent || '';
+  const referrer = document.referrer || '';
+  const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+  if (!isMobile) return false;
+
+  const hasGoogleSearchAppToken = /\bGSA\/\d/i.test(ua) || /GoogleApp|GoogleSearchApp/i.test(ua);
+  const hasGoogleAppReferrer = /googlequicksearchbox/i.test(referrer);
+  const isAndroidWebView = /;\s*wv\)/i.test(ua) || /\bwv\b/i.test(ua);
+
+  return hasGoogleSearchAppToken || hasGoogleAppReferrer || (isAndroidWebView && hasGoogleAppReferrer);
+}
+
+function markBrowserRecommendationDismissed() {
+  STATE.browserRecommendationDismissed = true;
+  try {
+    sessionStorage.setItem(GOOGLE_BROWSER_PROMPT_SESSION_KEY, '1');
+  } catch (error) {
+    console.warn('Browser recommendation session storage unavailable:', error);
+  }
+}
+
+function shouldShowBrowserRecommendationPrompt() {
+  if (!UI.browserRecommendationModal) return false;
+  if (!isMobileGoogleInAppBrowser()) return false;
+  if (STATE.browserRecommendationDismissed) return false;
+
+  try {
+    if (sessionStorage.getItem(GOOGLE_BROWSER_PROMPT_SESSION_KEY) === '1') {
+      STATE.browserRecommendationDismissed = true;
+      return false;
+    }
+  } catch (error) {
+    console.warn('Browser recommendation session storage read failed:', error);
+  }
+
+  return true;
+}
+
+function showBrowserRecommendationPrompt() {
+  if (!shouldShowBrowserRecommendationPrompt()) return;
+  UI.browserRecommendationModal.classList.add('visible');
+}
+
+function hideBrowserRecommendationPrompt() {
+  if (!UI.browserRecommendationModal) return;
+  UI.browserRecommendationModal.classList.remove('visible');
+  markBrowserRecommendationDismissed();
+}
+
+
 init();
 
 async function init() {
@@ -1516,6 +1572,7 @@ async function init() {
   renderCategoryChips();
   syncSelectionUI();
   syncAppViewportHeight();
+  showBrowserRecommendationPrompt();
   setupScene();
 
   if (shouldUseDeskFirstLoading()) {
@@ -1551,6 +1608,12 @@ async function init() {
 }
 
 function setupUI() {
+  if (UI.dismissBrowserRecommendationBtn) {
+    UI.dismissBrowserRecommendationBtn.addEventListener('click', () => {
+      hideBrowserRecommendationPrompt();
+    });
+  }
+
   UI.allowMic.addEventListener('click', async () => {
     const ok = await requestMicrophonePermission();
     if (!ok) return;
