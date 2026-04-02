@@ -19,7 +19,7 @@ const DESK_TILT_ACTIVE_BOUNDS = Object.freeze({
   minX: -1.47,
   maxX: 1.47,
   minZ: -5.72,
-  maxZ: -4.81,
+  maxZ: -4.99,
 });
 const PHYSICS_REST_THRESHOLD = 0.0008;
 const PHYSICS_MAX_VELOCITY = 0.55;
