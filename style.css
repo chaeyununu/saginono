@@ -2432,3 +2432,39 @@ body:has(.mic-badge.live) .compact-transcript-text {
     top: 13px !important;
   }
 }
+
+/* --- 2026-04-02 phone-only visual compensation: cover lower unfilled room area + add more space above history close button --- */
+@media (max-width: 640px) and (pointer: coarse) {
+  .app-shell::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: min(28vh, 230px);
+    background: linear-gradient(
+      180deg,
+      rgba(229, 217, 203, 0) 0%,
+      rgba(229, 217, 203, 0.78) 40%,
+      rgba(229, 217, 203, 0.96) 72%,
+      #e5d9cb 100%
+    );
+    pointer-events: none;
+    z-index: 8;
+  }
+
+  .room-hud {
+    bottom: 10px !important;
+    z-index: 20;
+  }
+
+  .history-panel {
+    padding-top: 32px !important;
+  }
+
+  #history-panel > .history-head > .icon-close-btn,
+  #history-panel > .minimal-panel-head > .icon-close-btn,
+  #close-history-btn.icon-close-btn {
+    top: 16px !important;
+  }
+}
