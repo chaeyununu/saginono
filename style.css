@@ -755,6 +755,41 @@ h1, h2, h3, p { margin: 0; }
 }
 
 
+@media (max-width: 767px) {
+  html,
+  body,
+  #app,
+  .app-shell,
+  .scene-root {
+    width: 100%;
+    height: 100dvh;
+    min-height: 100dvh;
+    overflow: hidden;
+    background: #f0ebe4;
+  }
+
+  body {
+    min-height: -webkit-fill-available;
+  }
+
+  .scene-root,
+  .scene-root canvas,
+  .noise-layer,
+  .ambient-glow {
+    inset: 0;
+  }
+
+  .scene-root,
+  .scene-root canvas,
+  .noise-layer {
+    width: 100%;
+    height: 100dvh;
+    min-height: 100dvh;
+    background: #f0ebe4;
+  }
+}
+
+
 
 /* === PNG-only button override === */
 :root {
@@ -2401,43 +2436,17 @@ body:has(.mic-badge.live) .compact-transcript-text {
   }
 }
 
-/* --- 2026-04-02 mobile viewport gap fix: keep scene/canvas filling mobile visual viewport --- */
-:root {
-  --mobile-app-vh: 100vh;
-}
-
+/* --- 2026-04-02 mobile-only micro adjust: lower dock slightly, add tiny top space above history close --- */
 @media (max-width: 768px) {
   html,
   body,
-  #app,
   .app-shell {
-    min-height: var(--mobile-app-vh) !important;
-    height: var(--mobile-app-vh) !important;
-    background: #EBD5BD !important;
-    background-color: #EBD5BD !important;
-  }
-
-  #app,
-  .app-shell {
-    position: fixed;
-    inset: 0;
-    width: 100vw;
-    overflow: hidden;
-  }
-
-  #scene-root,
-  .scene-root,
-  .scene-root canvas {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    background: #EBD5BD !important;
-    background-color: #EBD5BD !important;
+    min-height: 100dvh;
+    height: 100dvh;
   }
 
   .room-hud {
-    bottom: max(8px, env(safe-area-inset-bottom, 0px)) !important;
+    bottom: 8px !important;
   }
 
   #history-panel > .history-head > .icon-close-btn,
@@ -2449,7 +2458,7 @@ body:has(.mic-badge.live) .compact-transcript-text {
 
 @media (max-width: 640px) {
   .room-hud {
-    bottom: max(6px, env(safe-area-inset-bottom, 0px)) !important;
+    bottom: 6px !important;
   }
 
   #history-panel > .history-head > .icon-close-btn,
