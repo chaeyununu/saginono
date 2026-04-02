@@ -1598,6 +1598,7 @@ function setupUI() {
   });
 
   createLoadingOverlay();
+  maybeShowGoogleAppBrowserNotice();
   window.addEventListener('resize', onResize);
   window.addEventListener('pointermove', onPointerMove);
   window.addEventListener('pointerleave', hideMemoHover);
@@ -1728,6 +1729,36 @@ function showLoadingOverlay(title = '...', copy = '') {
 function hideLoadingOverlay() {
   if (!STATE.loadingOverlay) return;
   STATE.loadingOverlay.classList.remove('visible');
+}
+
+
+
+function isMobileGoogleInAppBrowser() {
+  const ua = navigator.userAgent || '';
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
+  const isGoogleApp = /\bGSA\/|GoogleApp|GoogleSearchApp|com\.google\.android\.googlequicksearchbox/i.test(ua);
+  return isMobile && isGoogleApp;
+}
+
+function maybeShowGoogleAppBrowserNotice() {
+  if (!isMobileGoogleInAppBrowser()) return;
+  if (document.getElementById('google-app-browser-notice')) return;
+
+  const notice = document.createElement('div');
+  notice.id = 'google-app-browser-notice';
+  notice.className = 'google-app-browser-notice';
+  notice.innerHTML = `
+    <div class="google-app-browser-card" role="status" aria-live="polite">
+      <div class="google-app-browser-copy">구글 앱 안에서는 화면이 잘릴 수 있어요.<br>크롬이나 사파리로 열어주세요.</div>
+      <button type="button" class="google-app-browser-close" aria-label="안내 닫기">닫기</button>
+    </div>
+  `;
+
+  notice.querySelector('.google-app-browser-close')?.addEventListener('click', () => {
+    notice.remove();
+  });
+
+  UI.appShell.appendChild(notice);
 }
 
 function renderCategoryChips() {
