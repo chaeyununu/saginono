@@ -1029,8 +1029,6 @@ const STATE = {
   pendingVisualRebuild: false,
   appReady: false,
   loadingOverlay: null,
-  nonDeskAssetsReady: false,
-  remainingAssetLoadPromise: null,
   playedEmotionRewardDropMemoIds: new Set(),
   layoutCache: Object.create(null),
   /* physics & interaction */
@@ -1485,31 +1483,12 @@ async function init() {
   const removedLegacyDummyMemoCount = cleanupLegacyDummyMemos();
   if (removedLegacyDummyMemoCount > 0) persistStorage();
   seedPlayedEmotionRewardDropsFromExistingMemos();
+  syncViewportHeightVar();
   setupUI();
+  updatePanelState();
   renderCategoryChips();
   syncSelectionUI();
   setupScene();
-
-  if (shouldUseDeskFirstLoading()) {
-    primeFallbackTemplatesForDeferredAssets();
-    await loadDeskAsset();
-    buildDeskAndDecor();
-    setupDeviceOrientation();
-    setupInteraction();
-    maybeTriggerReloadRa3();
-    startLoop();
-    STATE.appReady = true;
-    hideLoadingOverlay();
-
-    window.setTimeout(() => {
-      rebuildVisuals();
-      renderHistory();
-    }, 0);
-
-    void loadRemainingAssetsInBackground();
-    return;
-  }
-
   await loadAssets();
   buildDeskAndDecor();
   rebuildVisuals();
@@ -1533,6 +1512,12 @@ function setupUI() {
       showLoadingOverlay('...');
     } else {
       hideLoadingOverlay();
+      const noPanelOpen = UI.entryPanel.classList.contains('hidden') && UI.historyPanel.classList.contains('hidden');
+      if (noPanelOpen && STATE.memos.length === 0) {
+        openEntryPanel();
+      } else {
+        refreshEntryAssistiveCopy();
+      }
     }
   });
 
@@ -1599,29 +1584,50 @@ function setupUI() {
 
   createLoadingOverlay();
   window.addEventListener('resize', onResize);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', onResize);
+    window.visualViewport.addEventListener('scroll', onResize);
+  }
   window.addEventListener('pointermove', onPointerMove);
   window.addEventListener('pointerleave', hideMemoHover);
   UI.sceneRoot.addEventListener('pointerleave', hideMemoHover);
+}
+
+function updatePanelState() {
+  const entryOpen = !UI.entryPanel.classList.contains('hidden');
+  const historyOpen = !UI.historyPanel.classList.contains('hidden');
+  UI.appShell.dataset.panel = entryOpen ? 'entry' : historyOpen ? 'history' : 'none';
 }
 
 function openEntryPanel() {
   closeDetailPanel();
   UI.entryPanel.classList.remove('hidden');
   UI.historyPanel.classList.add('hidden');
+  window.requestAnimationFrame(() => {
+    UI.entryPanel.scrollTop = 0;
+  });
+  refreshEntryAssistiveCopy();
+  updatePanelState();
 }
 
 function closeEntryPanel() {
   UI.entryPanel.classList.add('hidden');
+  updatePanelState();
 }
 
 function openHistoryPanel() {
   closeDetailPanel();
   UI.historyPanel.classList.remove('hidden');
   UI.entryPanel.classList.add('hidden');
+  window.requestAnimationFrame(() => {
+    UI.historyList.scrollTop = 0;
+  });
+  updatePanelState();
 }
 
 function closeHistoryPanel() {
   UI.historyPanel.classList.add('hidden');
+  updatePanelState();
 }
 
 function createLoadingOverlay() {
@@ -1746,6 +1752,47 @@ function renderCategoryChips() {
   });
 }
 
+
+function getRecordButtonIdleLabel() {
+  if (!STATE.selection.category) return '메모 종류 선택';
+  return '말하기 시작';
+}
+
+function getSelectionHintText() {
+  if (!STATE.selection.category) return '1) 메모 종류를 고르고 2) 말하기를 누르면 바로 저장돼.';
+  if (STATE.selection.category === 'emotion') {
+    return STATE.selection.emotionTone === 'bad'
+      ? '지금 감정이 가라앉아 있다면 짧고 솔직하게 남기면 돼.'
+      : '좋은 감정이나 안도감도 짧게 남기면 방 안에 바로 쌓여.';
+  }
+
+  const label = CATEGORY_INFO[STATE.selection.category]?.label || '메모';
+  return `${label}을 한두 문장으로 말하면 바로 저장돼.`;
+}
+
+function getTranscriptIdleCopy() {
+  if (STATE.isListening) return getCombinedTranscript() || '듣는 중...';
+  if (!STATE.selection.category) return '메모 종류를 먼저 골라줘.';
+  if (STATE.selection.category === 'emotion') {
+    return STATE.selection.emotionTone === 'bad'
+      ? '예: 오늘 좀 불안했고 집중이 자꾸 끊겼어'
+      : '예: 오늘은 기분이 괜찮았고 조금 뿌듯했어';
+  }
+  if (STATE.selection.category === 'record') return '예: 오늘 수업에서 이해 안 된 개념이 있었어';
+  if (STATE.selection.category === 'clutter') return '예: 자꾸 떠오르는 생각을 그냥 짧게 남겨도 돼';
+  if (STATE.selection.category === 'routine') return '예: 책상 정리했고 해야 할 일을 다시 묶었어';
+  if (STATE.selection.category === 'snack') return '예: 오늘은 물 자주 마시고 끝까지 해보자';
+  return '짧게 말하면 바로 저장돼.';
+}
+
+function refreshEntryAssistiveCopy() {
+  if (!UI.selectionCopy || !UI.transcriptText) return;
+  UI.selectionCopy.textContent = getSelectionHintText();
+  if (!STATE.isListening) {
+    UI.transcriptText.textContent = getTranscriptIdleCopy();
+  }
+}
+
 function syncSelectionUI() {
   UI.categoryGrid.querySelectorAll('[data-category]').forEach((button) => {
     button.classList.toggle('active', button.dataset.category === STATE.selection.category);
@@ -1758,15 +1805,11 @@ function syncSelectionUI() {
     button.classList.toggle('active', isEmotion && button.dataset.tone === STATE.selection.emotionTone);
   });
 
-  if (!STATE.selection.category) {
-    UI.selectionCopy.textContent = '';
-  } else if (isEmotion) {
-    UI.selectionCopy.textContent = '';
-  } else {
-    UI.selectionCopy.textContent = '';
-  }
-
   UI.recordBtn.disabled = !canRecord();
+  if (!STATE.isListening && !STATE.isFinalizing) {
+    UI.recordBtn.textContent = getRecordButtonIdleLabel();
+  }
+  refreshEntryAssistiveCopy();
 }
 
 function canRecord() {
@@ -1818,7 +1861,7 @@ function ensureRecognition() {
   recognition.onstart = () => {
     STATE.isListening = true;
     setMicBadge('live', getRecognitionLanguageBadgeLabel());
-    UI.recordBtn.textContent = '중지';
+    UI.recordBtn.textContent = '중지하고 저장';
   };
 
   recognition.onresult = (event) => {
@@ -1877,7 +1920,7 @@ function ensureRecognition() {
 
     if (!STATE.isFinalizing) {
       setMicBadge('idle', '대기');
-      UI.recordBtn.textContent = '말하기';
+      UI.recordBtn.textContent = getRecordButtonIdleLabel();
     }
   };
 
@@ -1921,14 +1964,14 @@ function finalizeListening(cancelOnly) {
   }
 
   setMicBadge('processing', cancelOnly ? '중지' : '저장');
-  UI.recordBtn.textContent = '말하기';
+  UI.recordBtn.textContent = cancelOnly ? getRecordButtonIdleLabel() : '저장 중...';
 
   window.setTimeout(() => {
     STATE.isFinalizing = false;
     setMicBadge('idle', '대기');
 
     if (cancelOnly || !transcript) {
-      UI.transcriptText.textContent = transcript || '...';
+      refreshEntryAssistiveCopy();
       return;
     }
 
@@ -2009,8 +2052,8 @@ function updateRoomCopy(memo) {
 }
 
 function setupScene() {
-  const width = UI.sceneRoot.clientWidth || window.innerWidth;
-  const height = UI.sceneRoot.clientHeight || window.innerHeight;
+  syncViewportHeightVar();
+  const { width, height } = getViewportSize();
   const isMobile = width < 768;
 
   const roomColor = 0xf6f1eb;
@@ -2117,8 +2160,10 @@ function buildRoomShell() {
   group.add(wallGlow);
 }
 
-function getTemplateEntries() {
-  return [
+async function loadAssets() {
+  const loader = new GLTFLoader();
+
+  const templateEntries = [
     ['note', ASSET_FILES.note, createNoteFallback],
     ['scribble', ASSET_FILES.scribble, createScribbleFallback],
     ['clothesFolded', ASSET_FILES.clothesFolded, createClothesFoldedFallback],
@@ -2133,79 +2178,14 @@ function getTemplateEntries() {
     ['tumbler', ASSET_FILES.tumbler, createTumblerFallback],
     ['desk', ASSET_FILES.desk, createDeskFallback],
   ];
-}
 
-function shouldUseDeskFirstLoading() {
-  const ua = navigator.userAgent || '';
-  const platform = navigator.platform || '';
-  const maxTouchPoints = navigator.maxTouchPoints || 0;
-  const isIPad = /iPad/i.test(ua) || (platform === 'MacIntel' && maxTouchPoints > 1);
-  return isIPad || /Android|iPhone|iPod|Mobile/i.test(ua);
-}
-
-function finalizeTemplateRoot(root, key) {
-  normalizeTemplate(root, key);
-  applyShadowSettings(root);
-  return {
-    key,
-    root,
-    animations: root.animations || [],
-  };
-}
-
-function createFallbackTemplate(key, fallbackFactory) {
-  const root = fallbackFactory();
-  root.animations = [];
-  return finalizeTemplateRoot(root, key);
-}
-
-function primeFallbackTemplatesForDeferredAssets() {
-  getTemplateEntries().forEach(([key, , fallbackFactory]) => {
-    if (key === 'desk' || STATE.templates[key]) return;
-    STATE.templates[key] = createFallbackTemplate(key, fallbackFactory);
-  });
-}
-
-async function loadTemplateEntries(loader, entries) {
   const results = await Promise.all(
-    entries.map(([key, filename, fallback]) => loadTemplate(loader, key, filename, fallback))
+    templateEntries.map(([key, filename, fallback]) => loadTemplate(loader, key, filename, fallback))
   );
 
-  entries.forEach(([key], index) => {
+  templateEntries.forEach(([key], index) => {
     STATE.templates[key] = results[index];
   });
-}
-
-async function loadDeskAsset() {
-  const loader = new GLTFLoader();
-  const deskEntry = getTemplateEntries().filter(([key]) => key === 'desk');
-  await loadTemplateEntries(loader, deskEntry);
-}
-
-async function loadRemainingAssetsInBackground() {
-  if (STATE.nonDeskAssetsReady) return;
-  if (STATE.remainingAssetLoadPromise) return STATE.remainingAssetLoadPromise;
-
-  const loader = new GLTFLoader();
-  const deferredEntries = getTemplateEntries().filter(([key]) => key !== 'desk');
-
-  STATE.remainingAssetLoadPromise = loadTemplateEntries(loader, deferredEntries)
-    .then(() => {
-      STATE.nonDeskAssetsReady = true;
-      STATE.pendingVisualRebuild = true;
-      STATE.lastVisualSignature = '';
-    })
-    .finally(() => {
-      STATE.remainingAssetLoadPromise = null;
-    });
-
-  return STATE.remainingAssetLoadPromise;
-}
-
-async function loadAssets() {
-  const loader = new GLTFLoader();
-  await loadTemplateEntries(loader, getTemplateEntries());
-  STATE.nonDeskAssetsReady = true;
 }
 
 async function loadTemplate(loader, key, filename, fallbackFactory) {
@@ -2221,7 +2201,14 @@ async function loadTemplate(loader, key, filename, fallbackFactory) {
     root.animations = [];
   }
 
-  return finalizeTemplateRoot(root, key);
+  normalizeTemplate(root, key);
+  applyShadowSettings(root);
+
+  return {
+    key,
+    root,
+    animations: root.animations || [],
+  };
 }
 
 function normalizeTemplate(root, key) {
@@ -5106,28 +5093,59 @@ function updateCounts() {
   if (UI.activeVisualCount) UI.activeVisualCount.textContent = `${activeVisualMemoIds.size}`;
 }
 
+function getEmotionToneDisplayLabel(tone) {
+  if (tone === 'good') return 'good';
+  if (tone === 'bad') return 'bad';
+  return tone || '';
+}
+
 function renderHistory() {
   UI.historyList.innerHTML = '';
+
+  const totalCount = STATE.memos.length;
+  const activeCount = STATE.memos.filter((memo) => !memo.clearedAt).length;
+  const clearedCount = Math.max(0, totalCount - activeCount);
+
+  const summary = document.createElement('section');
+  summary.className = 'history-summary-card';
+  summary.innerHTML = `
+    <div class="history-summary-top">
+      <strong>메모 ${totalCount}개</strong>
+      <span>${activeCount}개 활성</span>
+    </div>
+    <div class="history-summary-stats">
+      <span class="history-stat">전체 ${totalCount}</span>
+      <span class="history-stat">활성 ${activeCount}</span>
+      <span class="history-stat">정리 ${clearedCount}</span>
+    </div>
+    <p>${totalCount ? '최신 메모부터 바로 보여. 필요한 건 정리하고, 아닌 건 삭제하면 돼.' : '아직 메모가 없어. 새 메모에서 바로 말해보면 돼.'}</p>
+  `;
+  UI.historyList.appendChild(summary);
 
   if (!STATE.memos.length) {
     const empty = document.createElement('div');
     empty.className = 'empty-card';
-    empty.innerHTML = `<strong>비어 있음</strong>`;
+    empty.innerHTML = `
+      <strong>아직 비어 있어</strong>
+      <p>권한 허용 후 아래 새 메모를 눌러 한두 문장만 말하면 바로 쌓여.</p>
+    `;
     UI.historyList.appendChild(empty);
     updateCounts();
     return;
   }
 
-  STATE.memos.forEach((memo) => {
+  const memosForDisplay = [...STATE.memos].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  memosForDisplay.forEach((memo) => {
     const card = document.createElement('article');
     card.className = 'log-card';
     card.dataset.category = memo.category;
     if (memo.emotionTone) card.dataset.tone = memo.emotionTone;
 
     const categoryLabel = CATEGORY_INFO[memo.category]?.label || memo.category;
-    const emotionLabel = memo.category === 'emotion' ? ` · ${memo.emotionTone}` : '';
+    const emotionLabel = memo.category === 'emotion' ? ` · ${getEmotionToneDisplayLabel(memo.emotionTone)}` : '';
     const statusChip = memo.clearedAt
-      ? '<span class="log-chip log-chip-success">정리</span>'
+      ? '<span class="log-chip log-chip-success">정리됨</span>'
       : '<span class="log-chip log-chip-outline">활성</span>';
 
     card.innerHTML = `
@@ -5141,6 +5159,7 @@ function renderHistory() {
         </div>
       </div>
       <p class="log-text">${escapeHtml(memo.transcript)}</p>
+      <p class="log-visual-copy">${escapeHtml(describeVisualState(memo))}</p>
       <div class="log-actions">
         ${memo.clearedAt ? '' : `<button type="button" class="log-btn" data-clear-id="${memo.id}">정리</button>`}
         <button type="button" class="log-btn danger" data-delete-id="${memo.id}">삭제</button>
@@ -5158,7 +5177,6 @@ function renderHistory() {
     button.addEventListener('click', () => deleteMemo(button.dataset.deleteId));
   });
 
-  /* Export / Import buttons */
   const backupWrap = document.createElement('div');
   backupWrap.className = 'backup-actions';
   backupWrap.innerHTML = `
@@ -5367,16 +5385,21 @@ function updateCamera(delta) {
 }
 
 function onResize() {
+  syncViewportHeightVar();
   if (!STATE.camera || !STATE.renderer) return;
-  const width = UI.sceneRoot.clientWidth || window.innerWidth;
-  const height = UI.sceneRoot.clientHeight || window.innerHeight;
+  const { width, height } = getViewportSize();
   const isMobile = width < 768;
   STATE.camera.fov = isMobile ? 54 : 43;
   STATE.camera.aspect = width / height;
   STATE.camera.updateProjectionMatrix();
   STATE.renderer.setSize(width, height);
+  STATE.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 1.8));
   if (isMobile) {
     STATE.camera.position.set(-0.2, 7.6, 14.5);
+    STATE.camera.lookAt(-0.2, 0.6, -2.2);
+  } else {
+    STATE.camera.position.set(-0.55, 5.1, 11.6);
+    STATE.camera.lookAt(-0.55, 1.35, -2.35);
   }
 }
 
@@ -6240,6 +6263,24 @@ function formatDate(isoString) {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+function syncViewportHeightVar() {
+  const vv = window.visualViewport;
+  const height = Math.round((vv && vv.height) || window.innerHeight || document.documentElement.clientHeight || 0);
+  if (height > 0) {
+    document.documentElement.style.setProperty('--app-height', `${height}px`);
+  }
+}
+
+function getViewportSize() {
+  const vv = window.visualViewport;
+  const width = Math.round((vv && vv.width) || UI.sceneRoot.clientWidth || window.innerWidth || document.documentElement.clientWidth || 1);
+  const height = Math.round((vv && vv.height) || UI.sceneRoot.clientHeight || window.innerHeight || document.documentElement.clientHeight || 1);
+  return {
+    width: Math.max(1, width),
+    height: Math.max(1, height),
+  };
 }
 
 function distance2D(ax, az, bx, bz) {
