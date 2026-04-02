@@ -12,8 +12,15 @@ const PHYSICS_FRICTION_OLD = 0.78;
 const PHYSICS_FRICTION_MID = 0.88;
 const PHYSICS_AGE_RECENT_HOURS = 72;
 const PHYSICS_AGE_OLD_DAYS = 3;
+const PHYSICS_AGE_FULL_SPEED_DAYS = 21;
 const PHYSICS_TILT_FORCE = 0.044;
 const PHYSICS_TILT_SMOOTHING = 0.22;
+const DESK_TILT_ACTIVE_BOUNDS = Object.freeze({
+  minX: -1.47,
+  maxX: 1.47,
+  minZ: -5.72,
+  maxZ: -4.81,
+});
 const PHYSICS_REST_THRESHOLD = 0.0008;
 const PHYSICS_MAX_VELOCITY = 0.55;
 const PHYSICS_THROW_MULTIPLIER = 0.032;
@@ -6023,46 +6030,60 @@ function isRecentPhysicsLockedMemo(memo) {
 }
 
 function getPhysicsAgeMotionProgress(memo) {
-  if (!memo) return 0.25;
+  if (!memo) return 0.16;
   const ageDays = getPhysicsAgeDays(memo);
   if (ageDays <= PHYSICS_AGE_OLD_DAYS) return 0;
-  return clamp((ageDays - PHYSICS_AGE_OLD_DAYS) / 11, 0, 1);
+  const normalized = clamp((ageDays - PHYSICS_AGE_OLD_DAYS) / (PHYSICS_AGE_FULL_SPEED_DAYS - PHYSICS_AGE_OLD_DAYS), 0, 1);
+  return Math.pow(normalized, 0.72);
 }
 
 function getPhysicsTiltStrength(memo, onDesk) {
   if (isRecentPhysicsLockedMemo(memo)) return 0;
   const t = getPhysicsAgeMotionProgress(memo);
   return onDesk
-    ? THREE.MathUtils.lerp(1.05, 3.1, t)
-    : THREE.MathUtils.lerp(0.95, 2.75, t);
+    ? THREE.MathUtils.lerp(0.22, 6.4, t)
+    : THREE.MathUtils.lerp(0.16, 7.1, t);
 }
 
 function getPhysicsFriction(memo, onDesk = false) {
   if (isRecentPhysicsLockedMemo(memo)) return 1;
   const t = getPhysicsAgeMotionProgress(memo);
   return onDesk
-    ? THREE.MathUtils.lerp(0.9, 0.72, t)
-    : THREE.MathUtils.lerp(PHYSICS_FLOOR_ROLL_FRICTION, 0.86, t);
+    ? THREE.MathUtils.lerp(0.972, 0.58, t)
+    : THREE.MathUtils.lerp(0.984, 0.5, t);
 }
 
 function getPhysicsVelocityCap(memo, onDesk) {
   if (isRecentPhysicsLockedMemo(memo)) return 0;
   const t = getPhysicsAgeMotionProgress(memo);
   return onDesk
-    ? THREE.MathUtils.lerp(0.42, 1.05, t)
-    : THREE.MathUtils.lerp(PHYSICS_MAX_VELOCITY, 1.42, t);
+    ? THREE.MathUtils.lerp(0.08, 2.35, t)
+    : THREE.MathUtils.lerp(0.06, 2.8, t);
 }
 
 function getDeskCollisionBounds() {
   const bounds = getDeskSurfaceBounds();
   if (!bounds) return null;
 
-  return {
+  const computedBounds = {
     minX: bounds.minX + DESK_SURFACE_SIDE_INSET,
     maxX: bounds.maxX - DESK_SURFACE_SIDE_INSET,
     minZ: bounds.minZ + DESK_SURFACE_BACK_INSET,
     maxZ: bounds.maxZ - DESK_SURFACE_FRONT_INSET,
   };
+
+  const clampedBounds = {
+    minX: Math.max(computedBounds.minX, DESK_TILT_ACTIVE_BOUNDS.minX),
+    maxX: Math.min(computedBounds.maxX, DESK_TILT_ACTIVE_BOUNDS.maxX),
+    minZ: Math.max(computedBounds.minZ, DESK_TILT_ACTIVE_BOUNDS.minZ),
+    maxZ: Math.min(computedBounds.maxZ, DESK_TILT_ACTIVE_BOUNDS.maxZ),
+  };
+
+  if (clampedBounds.minX >= clampedBounds.maxX || clampedBounds.minZ >= clampedBounds.maxZ) {
+    return { ...DESK_TILT_ACTIVE_BOUNDS };
+  }
+
+  return clampedBounds;
 }
 
 function isInsideDeskCollisionBounds(x, z) {
