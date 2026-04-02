@@ -1029,6 +1029,8 @@ const STATE = {
   pendingVisualRebuild: false,
   appReady: false,
   loadingOverlay: null,
+  nonDeskAssetsReady: false,
+  remainingAssetLoadPromise: null,
   playedEmotionRewardDropMemoIds: new Set(),
   layoutCache: Object.create(null),
   /* physics & interaction */
@@ -1487,6 +1489,23 @@ async function init() {
   renderCategoryChips();
   syncSelectionUI();
   setupScene();
+
+  if (shouldUseDeskFirstLoading()) {
+    primeFallbackTemplatesForDeferredAssets();
+    await loadDeskAsset();
+    buildDeskAndDecor();
+    rebuildVisuals();
+    renderHistory();
+    setupDeviceOrientation();
+    setupInteraction();
+    maybeTriggerReloadRa3();
+    startLoop();
+    STATE.appReady = true;
+    hideLoadingOverlay();
+    void loadRemainingAssetsInBackground();
+    return;
+  }
+
   await loadAssets();
   buildDeskAndDecor();
   rebuildVisuals();
@@ -2094,10 +2113,8 @@ function buildRoomShell() {
   group.add(wallGlow);
 }
 
-async function loadAssets() {
-  const loader = new GLTFLoader();
-
-  const templateEntries = [
+function getTemplateEntries() {
+  return [
     ['note', ASSET_FILES.note, createNoteFallback],
     ['scribble', ASSET_FILES.scribble, createScribbleFallback],
     ['clothesFolded', ASSET_FILES.clothesFolded, createClothesFoldedFallback],
@@ -2112,14 +2129,79 @@ async function loadAssets() {
     ['tumbler', ASSET_FILES.tumbler, createTumblerFallback],
     ['desk', ASSET_FILES.desk, createDeskFallback],
   ];
+}
 
+function shouldUseDeskFirstLoading() {
+  const ua = navigator.userAgent || '';
+  const platform = navigator.platform || '';
+  const maxTouchPoints = navigator.maxTouchPoints || 0;
+  const isIPad = /iPad/i.test(ua) || (platform === 'MacIntel' && maxTouchPoints > 1);
+  return isIPad || /Android|iPhone|iPod|Mobile/i.test(ua);
+}
+
+function finalizeTemplateRoot(root, key) {
+  normalizeTemplate(root, key);
+  applyShadowSettings(root);
+  return {
+    key,
+    root,
+    animations: root.animations || [],
+  };
+}
+
+function createFallbackTemplate(key, fallbackFactory) {
+  const root = fallbackFactory();
+  root.animations = [];
+  return finalizeTemplateRoot(root, key);
+}
+
+function primeFallbackTemplatesForDeferredAssets() {
+  getTemplateEntries().forEach(([key, , fallbackFactory]) => {
+    if (key === 'desk' || STATE.templates[key]) return;
+    STATE.templates[key] = createFallbackTemplate(key, fallbackFactory);
+  });
+}
+
+async function loadTemplateEntries(loader, entries) {
   const results = await Promise.all(
-    templateEntries.map(([key, filename, fallback]) => loadTemplate(loader, key, filename, fallback))
+    entries.map(([key, filename, fallback]) => loadTemplate(loader, key, filename, fallback))
   );
 
-  templateEntries.forEach(([key], index) => {
+  entries.forEach(([key], index) => {
     STATE.templates[key] = results[index];
   });
+}
+
+async function loadDeskAsset() {
+  const loader = new GLTFLoader();
+  const deskEntry = getTemplateEntries().filter(([key]) => key === 'desk');
+  await loadTemplateEntries(loader, deskEntry);
+}
+
+async function loadRemainingAssetsInBackground() {
+  if (STATE.nonDeskAssetsReady) return;
+  if (STATE.remainingAssetLoadPromise) return STATE.remainingAssetLoadPromise;
+
+  const loader = new GLTFLoader();
+  const deferredEntries = getTemplateEntries().filter(([key]) => key !== 'desk');
+
+  STATE.remainingAssetLoadPromise = loadTemplateEntries(loader, deferredEntries)
+    .then(() => {
+      STATE.nonDeskAssetsReady = true;
+      STATE.pendingVisualRebuild = true;
+      STATE.lastVisualSignature = '';
+    })
+    .finally(() => {
+      STATE.remainingAssetLoadPromise = null;
+    });
+
+  return STATE.remainingAssetLoadPromise;
+}
+
+async function loadAssets() {
+  const loader = new GLTFLoader();
+  await loadTemplateEntries(loader, getTemplateEntries());
+  STATE.nonDeskAssetsReady = true;
 }
 
 async function loadTemplate(loader, key, filename, fallbackFactory) {
@@ -2135,14 +2217,7 @@ async function loadTemplate(loader, key, filename, fallbackFactory) {
     root.animations = [];
   }
 
-  normalizeTemplate(root, key);
-  applyShadowSettings(root);
-
-  return {
-    key,
-    root,
-    animations: root.animations || [],
-  };
+  return finalizeTemplateRoot(root, key);
 }
 
 function normalizeTemplate(root, key) {
