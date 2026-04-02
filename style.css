@@ -755,41 +755,6 @@ h1, h2, h3, p { margin: 0; }
 }
 
 
-@media (max-width: 767px) {
-  html,
-  body,
-  #app,
-  .app-shell,
-  .scene-root {
-    width: 100%;
-    height: 100dvh;
-    min-height: 100dvh;
-    overflow: hidden;
-    background: #f0ebe4;
-  }
-
-  body {
-    min-height: -webkit-fill-available;
-  }
-
-  .scene-root,
-  .scene-root canvas,
-  .noise-layer,
-  .ambient-glow {
-    inset: 0;
-  }
-
-  .scene-root,
-  .scene-root canvas,
-  .noise-layer {
-    width: 100%;
-    height: 100dvh;
-    min-height: 100dvh;
-    background: #f0ebe4;
-  }
-}
-
-
 
 /* === PNG-only button override === */
 :root {
@@ -2465,5 +2430,50 @@ body:has(.mic-badge.live) .compact-transcript-text {
   #history-panel > .minimal-panel-head > .icon-close-btn,
   #close-history-btn.icon-close-btn {
     top: 13px !important;
+  }
+}
+
+
+/* --- 2026-04-03 mobile full-viewport scene lock: no white remainder, scene itself fills page --- */
+@media (hover: none) and (pointer: coarse) {
+  html,
+  body {
+    width: 100%;
+    min-height: 100%;
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  body {
+    position: fixed;
+    inset: 0;
+  }
+
+  .app-shell {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: var(--app-vh, 100dvh);
+    min-height: var(--app-vh, 100dvh);
+    overflow: hidden;
+  }
+
+  .scene-root {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  .scene-root canvas {
+    position: absolute !important;
+    left: -2px;
+    top: -2px;
+    width: calc(100% + 4px) !important;
+    height: calc(100% + 4px) !important;
+    max-width: none !important;
+    max-height: none !important;
+    display: block;
   }
 }
