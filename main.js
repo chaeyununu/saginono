@@ -1494,14 +1494,18 @@ async function init() {
     primeFallbackTemplatesForDeferredAssets();
     await loadDeskAsset();
     buildDeskAndDecor();
-    rebuildVisuals();
-    renderHistory();
     setupDeviceOrientation();
     setupInteraction();
     maybeTriggerReloadRa3();
     startLoop();
     STATE.appReady = true;
     hideLoadingOverlay();
+
+    window.setTimeout(() => {
+      rebuildVisuals();
+      renderHistory();
+    }, 0);
+
     void loadRemainingAssetsInBackground();
     return;
   }
