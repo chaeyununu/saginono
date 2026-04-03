@@ -1049,6 +1049,7 @@ const STATE = {
   loadingOverlay: null,
   nonDeskAssetsReady: false,
   remainingAssetLoadPromise: null,
+  deferredVisualRevealScheduled: false,
   playedEmotionRewardDropMemoIds: new Set(),
   layoutCache: Object.create(null),
   /* physics & interaction */
@@ -1677,7 +1678,6 @@ async function init() {
     setupScene();
 
     if (shouldUseDeskFirstLoading()) {
-      primeFallbackTemplatesForDeferredAssets();
       await loadDeskAsset();
       buildDeskAndDecor();
       setupDeviceOrientation();
@@ -1686,13 +1686,11 @@ async function init() {
       startLoop();
       STATE.appReady = true;
       hideLoadingOverlay();
+      renderHistory();
 
-      window.setTimeout(() => {
-        rebuildVisuals();
-        renderHistory();
-      }, 0);
-
-      void loadRemainingAssetsInBackground();
+      scheduleDeferredTask(() => {
+        void loadRemainingAssetsInBackground();
+      }, 800);
       return;
     }
 
@@ -2339,6 +2337,67 @@ function shouldUseDeskFirstLoading() {
   return true;
 }
 
+function scheduleDeferredTask(task, timeout = 1200) {
+  if (typeof task !== 'function') return null;
+
+  if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+    return window.requestIdleCallback(() => {
+      try {
+        task();
+      } catch (error) {
+        console.warn('Deferred task failed.', error);
+      }
+    }, { timeout });
+  }
+
+  return window.setTimeout(() => {
+    try {
+      task();
+    } catch (error) {
+      console.warn('Deferred task failed.', error);
+    }
+  }, Math.min(timeout, 160));
+}
+
+function scheduleDeferredVisualReveal() {
+  if (STATE.deferredVisualRevealScheduled) return;
+  STATE.deferredVisualRevealScheduled = true;
+
+  const reveal = () => {
+    STATE.deferredVisualRevealScheduled = false;
+    STATE.pendingVisualRebuild = true;
+    STATE.lastVisualSignature = '';
+  };
+
+  const scheduleReveal = () => scheduleDeferredTask(reveal, 1800);
+
+  if (typeof document !== 'undefined' && document.hidden) {
+    const onVisible = () => {
+      if (document.hidden) return;
+      document.removeEventListener('visibilitychange', onVisible);
+      scheduleReveal();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return;
+  }
+
+  scheduleReveal();
+}
+
+function getTemplateEntryByKey(key) {
+  return getTemplateEntries().find(([entryKey]) => entryKey === key) || null;
+}
+
+function ensureDeferredFallbackTemplate(key) {
+  if (STATE.templates[key]) return STATE.templates[key];
+  const entry = getTemplateEntryByKey(key);
+  if (!entry) return null;
+  const [, , fallbackFactory] = entry;
+  const template = createFallbackTemplate(key, fallbackFactory);
+  STATE.templates[key] = template;
+  return template;
+}
+
 function finalizeTemplateRoot(root, key) {
   normalizeTemplate(root, key);
   applyShadowSettings(root);
@@ -2355,13 +2414,6 @@ function createFallbackTemplate(key, fallbackFactory) {
   return finalizeTemplateRoot(root, key);
 }
 
-function primeFallbackTemplatesForDeferredAssets() {
-  getTemplateEntries().forEach(([key, , fallbackFactory]) => {
-    if (key === 'desk' || STATE.templates[key]) return;
-    STATE.templates[key] = createFallbackTemplate(key, fallbackFactory);
-  });
-}
-
 async function loadTemplateEntries(loader, entries) {
   const results = await Promise.all(
     entries.map(([key, filename, fallback]) => loadTemplate(loader, key, filename, fallback))
@@ -2370,6 +2422,13 @@ async function loadTemplateEntries(loader, entries) {
   entries.forEach(([key], index) => {
     STATE.templates[key] = results[index];
   });
+}
+
+async function loadTemplateEntriesSequentially(loader, entries) {
+  for (const [key, filename, fallback] of entries) {
+    STATE.templates[key] = await loadTemplate(loader, key, filename, fallback);
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+  }
 }
 
 async function loadDeskAsset() {
@@ -2385,17 +2444,15 @@ async function loadRemainingAssetsInBackground() {
   const loader = new GLTFLoader();
   const deferredEntries = getTemplateEntries().filter(([key]) => key !== 'desk');
 
-  STATE.remainingAssetLoadPromise = loadTemplateEntries(loader, deferredEntries)
+  STATE.remainingAssetLoadPromise = loadTemplateEntriesSequentially(loader, deferredEntries)
     .then(() => {
       STATE.nonDeskAssetsReady = true;
-      STATE.pendingVisualRebuild = true;
-      STATE.lastVisualSignature = '';
+      scheduleDeferredVisualReveal();
     })
     .catch((error) => {
       console.warn('Deferred asset loading failed. Keeping fallback templates.', error);
       STATE.nonDeskAssetsReady = true;
-      STATE.pendingVisualRebuild = true;
-      STATE.lastVisualSignature = '';
+      scheduleDeferredVisualReveal();
     })
     .finally(() => {
       STATE.remainingAssetLoadPromise = null;
@@ -3009,7 +3066,10 @@ function buildStaticDecor() {
 }
 
 function createAssetInstance(key) {
-  const template = STATE.templates[key];
+  const template = STATE.templates[key] || ensureDeferredFallbackTemplate(key);
+  if (!template) {
+    throw new Error(`Missing asset template: ${key}`);
+  }
   const root = template.animations.length ? cloneSkeleton(template.root) : template.root.clone(true);
   root.userData.assetKey = key;
   /* Shadow settings are inherited from the template — no need to re-traverse */
