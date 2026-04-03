@@ -24,8 +24,8 @@ const PHYSICS_THROW_MULTIPLIER = 0.032;
 const PHYSICS_THROW_FRICTION = 0.92;
 const PHYSICS_BOUNCE_FACTOR = 0.45;
 const PHYSICS_ROOM_BOUNDS = { minX: -8.5, maxX: 8.5, minZ: -5.8, maxZ: 5.4 };
-const PHYSICS_SEPARATION_RADIUS = 1.75;
-const PHYSICS_SEPARATION_FORCE = 0.03;
+const PHYSICS_SEPARATION_RADIUS = 2.25;
+const PHYSICS_SEPARATION_FORCE = 0.09;
 const LONG_PRESS_MS = 0;
 const DRAG_DEAD_ZONE = 3;
 const DRAG_LERP = 0.55;
@@ -36,6 +36,9 @@ const PHYSICS_VERTICAL_BOUNCE = 0.2;
 const PHYSICS_THROW_UPWARD = 0.14;
 const PHYSICS_DESK_EDGE_FALL_SPEED = -0.035;
 const PHYSICS_FLOOR_ROLL_FRICTION = 0.965;
+const PHYSICS_FLOOR_ROLL_FRICTION_RECENT = 0.993;
+const PHYSICS_FLOOR_ROLL_FRICTION_MID = 0.976;
+const PHYSICS_FLOOR_ROLL_FRICTION_OLD = 0.935;
 const DESK_SURFACE_SIDE_INSET = 0.08;
 const DESK_SURFACE_BACK_INSET = 0.08;
 const DESK_SURFACE_FRONT_INSET = 1.08;
@@ -6047,6 +6050,13 @@ function getPhysicsTiltStrength(memo) {
   return PHYSICS_TILT_SCALE_MID;
 }
 
+function getPhysicsFloorRollFriction(memo) {
+  const tier = getPhysicsAgeTier(memo);
+  if (tier === 'recent') return PHYSICS_FLOOR_ROLL_FRICTION_RECENT;
+  if (tier === 'old') return PHYSICS_FLOOR_ROLL_FRICTION_OLD;
+  return PHYSICS_FLOOR_ROLL_FRICTION_MID;
+}
+
 function getDeskCollisionBounds() {
   const bounds = getDeskSurfaceBounds();
   if (!bounds) return null;
@@ -6162,7 +6172,7 @@ function updatePhysics(delta) {
     if (m && m.id) memoMap.set(m.id, m);
   }
 
-  const activeDeskVisuals = [];
+  const activeGroundedVisuals = [];
   STATE.visuals.forEach((visual) => {
     if (visual.kind !== 'asset' || !visual.object || !visual.phys) return;
     if (visual === STATE.grabbedVisual) return;
@@ -6170,16 +6180,15 @@ function updatePhysics(delta) {
     const memo = visual.memoIds?.length ? memoMap.get(visual.memoIds[0]) || null : null;
     if (isRecentPhysicsLockedMemo(memo)) return;
     if (visual.phys.airborne) return;
-    if (!visual.phys.onDesk) return;
-    activeDeskVisuals.push(visual);
+    activeGroundedVisuals.push(visual);
   });
 
   const sepImpulses = new Map();
-  for (let i = 0; i < activeDeskVisuals.length; i++) {
-    const a = activeDeskVisuals[i];
+  for (let i = 0; i < activeGroundedVisuals.length; i++) {
+    const a = activeGroundedVisuals[i];
     if (!sepImpulses.has(a)) sepImpulses.set(a, { x: 0, z: 0 });
-    for (let j = i + 1; j < activeDeskVisuals.length; j++) {
-      const b = activeDeskVisuals[j];
+    for (let j = i + 1; j < activeGroundedVisuals.length; j++) {
+      const b = activeGroundedVisuals[j];
       if (!sepImpulses.has(b)) sepImpulses.set(b, { x: 0, z: 0 });
       const dx = a.object.position.x - b.object.position.x;
       const dz = a.object.position.z - b.object.position.z;
@@ -6336,8 +6345,16 @@ function updatePhysics(delta) {
       p.settled = false;
     }
 
-    p.vx *= PHYSICS_FLOOR_ROLL_FRICTION;
-    p.vz *= PHYSICS_FLOOR_ROLL_FRICTION;
+    const floorSep = sepImpulses.get(visual);
+    if (floorSep && (Math.abs(floorSep.x) > 0.0001 || Math.abs(floorSep.z) > 0.0001)) {
+      p.vx += floorSep.x;
+      p.vz += floorSep.z;
+      p.settled = false;
+    }
+
+    const floorRollFriction = getPhysicsFloorRollFriction(memo);
+    p.vx *= floorRollFriction;
+    p.vz *= floorRollFriction;
 
     const floorSpeed = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
     if (floorSpeed < PHYSICS_REST_THRESHOLD && !hasForce) {
