@@ -15,31 +15,34 @@ const PHYSICS_AGE_OLD_DAYS = 3;
 const PHYSICS_TILT_FORCE = 0.044;
 const PHYSICS_TILT_SMOOTHING = 0.22;
 const PHYSICS_REST_THRESHOLD = 0.0008;
-const PHYSICS_MAX_VELOCITY = 0.35;
-const PHYSICS_THROW_MULTIPLIER = 0.018;
+const PHYSICS_MAX_VELOCITY = 0.55;
+const PHYSICS_THROW_MULTIPLIER = 0.032;
 const PHYSICS_THROW_FRICTION = 0.92;
-const PHYSICS_BOUNCE_FACTOR = 0.3;
+const PHYSICS_BOUNCE_FACTOR = 0.45;
 const PHYSICS_ROOM_BOUNDS = { minX: -8.5, maxX: 8.5, minZ: -5.8, maxZ: 5.4 };
-const PHYSICS_SEPARATION_RADIUS = 1.2;
-const PHYSICS_SEPARATION_FORCE = 0.012;
-const LONG_PRESS_MS = 500;
-const DRAG_DEAD_ZONE = 6;
+const PHYSICS_SEPARATION_RADIUS = 1.75;
+const PHYSICS_SEPARATION_FORCE = 0.03;
+const LONG_PRESS_MS = 0;
+const DRAG_DEAD_ZONE = 3;
+const DRAG_LERP = 0.55;
+const MOBILE_VISIBLE_X_RANGE = 5.2;
+const PHYSICS_FLOOR_Y = 0.02;
+const PHYSICS_AIR_GRAVITY = 0.018;
+const PHYSICS_VERTICAL_BOUNCE = 0.2;
+const PHYSICS_THROW_UPWARD = 0.14;
+const PHYSICS_DESK_EDGE_FALL_SPEED = -0.035;
+const PHYSICS_FLOOR_ROLL_FRICTION = 0.965;
+const DESK_SURFACE_SIDE_INSET = 0.08;
+const DESK_SURFACE_BACK_INSET = 0.08;
+const DESK_SURFACE_FRONT_INSET = 0.72;
+const DESK_OBSTACLE_EPSILON = 0.02;
 const VELOCITY_HISTORY_SIZE = 6;
 const IDB_DB_NAME = 'mind-room-db';
 const IDB_STORE_NAME = 'app-data';
 const IDB_DB_VERSION = 1;
-
-const GLB_LOAD_TIMEOUT_MS = 3500;
-const GLB_BACKGROUND_RETRY_DELAY_MS = 4000;
-const GLB_BACKGROUND_MAX_RETRIES = 3;
-const GLB_BACKGROUND_BATCH_SIZE_DESKTOP = 3;
-const GLB_BACKGROUND_BATCH_SIZE_COARSE = 2;
-const GLB_BACKGROUND_BATCH_DELAY_MS = 90;
-const PHYSICS_MAX_SEPARATION_VISUALS = 22;
-const FREEZE_RELOAD_THRESHOLD_MS = 10000;
-const FREEZE_RELOAD_CHECK_MS = 1200;
-const FREEZE_RELOAD_STARTUP_GRACE_MS = 8000;
-const FREEZE_RELOAD_STALE_STRIKES_REQUIRED = 2;
+const GOOGLE_BROWSER_PROMPT_SESSION_KEY = 'mind-room-google-browser-prompt-dismissed-v1';
+const DUMMY_MEMO_SEED_COUNT = 30;
+const DUMMY_MEMO_SEED_VERSION = 'demo-seed-v1';
 
 const SILENCE_MS = 1800;
 const SPEECH_FINALIZE_GRACE_MS = 240;
@@ -50,7 +53,7 @@ const ROUTINE_SCATTER_DAYS = 3;
 const EMOTION_DECAY_DAYS = 7;
 const NEGATIVE_EMOTION_VISIBLE_MS = 6500;
 const POSITIVE_EMOTION_VISIBLE_MS = 5200;
-const VISUAL_CHECK_MS = 6000;
+const VISUAL_CHECK_MS = 4000;
 const EMOTION_REWARD_DROP_MS = 920;
 const EMOTION_REWARD_DROP_HEIGHT = 1.55;
 const CLUTTER_DROP_MS = 980;
@@ -973,6 +976,8 @@ const UI = {
   appShell: document.getElementById('app'),
   sceneRoot: document.getElementById('scene-root'),
   permissionModal: document.getElementById('permission-modal'),
+  browserRecommendationModal: document.getElementById('browser-recommendation-modal'),
+  dismissBrowserRecommendationBtn: document.getElementById('dismiss-browser-recommendation'),
   allowMic: document.getElementById('allow-mic'),
   entryPanel: document.getElementById('entry-panel'),
   categoryGrid: document.getElementById('category-grid'),
@@ -1039,18 +1044,11 @@ const STATE = {
   lastVisualSignature: '',
   visualCheckElapsed: 0,
   pendingVisualRebuild: false,
-  pendingDeskDecorRebuild: false,
   appReady: false,
+  browserRecommendationDismissed: false,
   loadingOverlay: null,
   nonDeskAssetsReady: false,
   remainingAssetLoadPromise: null,
-  assetsLoading: false,
-  freezeWatchdogTimer: null,
-  freezeReloadTriggered: false,
-  lastFrameHeartbeat: performance.now(),
-  loopStarted: false,
-  loopStartedAt: 0,
-  freezeStaleStrikeCount: 0,
   playedEmotionRewardDropMemoIds: new Set(),
   layoutCache: Object.create(null),
   /* physics & interaction */
@@ -1128,6 +1126,90 @@ function cleanupLegacyDummyMemos() {
   STATE.layoutCache = nextLayoutCache;
 
   return previousCount - filteredMemos.length;
+}
+
+
+function createSeedDummyMemos(count = DUMMY_MEMO_SEED_COUNT, nowMs = Date.now()) {
+  const timelineDays = [
+    0.08, 0.18, 0.35, 0.6, 0.9,
+    1.2, 1.8, 2.4, 2.9, 3.2,
+    3.8, 4.4, 4.9, 5.4, 6.1,
+    6.8, 7.3, 8.2, 9.5, 11,
+    12.5, 14, 16, 18, 20,
+    24, 28, 32, 38, 45,
+  ];
+  const categoryCycle = [
+    'emotion', 'record', 'clutter', 'routine', 'snack',
+    'emotion', 'record', 'clutter', 'routine', 'snack',
+  ];
+  const transcriptPool = {
+    emotion: [
+      '오늘은 기분이 가벼워서 방 안이 조금 밝게 느껴졌어.',
+      '조금 예민하지만 그래도 정리해보려는 마음은 있어.',
+      '애매하게 마음이 흔들렸는데 일단 기록해둘래.',
+      '생각보다 괜찮았고 다시 해볼 힘이 조금 생겼어.',
+      '감정이 묘하게 남아서 눈에 보이게 두고 싶었어.',
+      '괜히 울컥했지만 금방 지나가길 바라면서 남겨둠.',
+    ],
+    record: [
+      '오늘 작업 아이디어 하나를 급하게 메모해뒀어.',
+      '수업 듣다가 떠오른 구조를 짧게 적어뒀어.',
+      '앱 수정 포인트를 잊기 전에 남겨놓음.',
+      '나중에 다시 볼 만한 생각이라 기록해둠.',
+      '사소하지만 중요한 디테일이라서 써둠.',
+      '해야 할 작업 흐름을 간단히 정리해봤어.',
+    ],
+    clutter: [
+      '머릿속이 복잡해서 잡생각을 바닥에 던져놓는 느낌.',
+      '괜히 계속 맴도는 생각이라 흩뿌려두고 싶었어.',
+      '정리 안 된 불안이 조금 남아 있었어.',
+      '쓸데없는 생각인데도 자꾸 돌아와서 남김.',
+      '지워버리고 싶지만 일단 눈에 보이게 내려놓음.',
+      '복잡한 마음을 종이처럼 던져두는 기분이었어.',
+    ],
+    routine: [
+      '생활 리듬을 다시 잡아보려고 정리 메모를 남김.',
+      '작은 루틴 하나라도 붙잡고 싶어서 기록했어.',
+      '오늘은 정돈된 상태를 조금 유지하고 싶었어.',
+      '흐트러진 패턴을 다시 세우려는 마음으로 남김.',
+      '내일을 위해 정리해야 할 일을 적어둠.',
+      '생활 흐름을 다시 맞춰보려는 체크포인트야.',
+    ],
+    snack: [
+      '이번엔 진짜 해보겠다는 다짐을 하나 남겨둠.',
+      '작게라도 꾸준히 가보자는 마음이 들었어.',
+      '다시 시작하자는 의미로 남겨둔 다짐이야.',
+      '미루지 않겠다는 마음을 눈에 보이게 두고 싶었어.',
+      '작업을 끝까지 끌고 가보자는 다짐이야.',
+      '흔들려도 계속 가보자는 쪽으로 마음을 정리했어.',
+    ],
+  };
+
+  const memos = [];
+  for (let i = 0; i < count; i += 1) {
+    const category = categoryCycle[i % categoryCycle.length];
+    const pool = transcriptPool[category] || ['테스트 메모'];
+    const transcript = pool[i % pool.length];
+    const ageDays = timelineDays[i % timelineDays.length] + Math.floor(i / timelineDays.length) * 7;
+    const createdAt = new Date(nowMs - ageDays * 24 * 60 * 60 * 1000).toISOString();
+    memos.push({
+      id: `${DUMMY_MEMO_SEED_VERSION}-${String(i + 1).padStart(2, '0')}`,
+      category,
+      emotionTone: category === 'emotion' ? (i % 2 === 0 ? 'good' : 'bad') : null,
+      transcript,
+      createdAt,
+      clearedAt: null,
+    });
+  }
+
+  return memos.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+}
+
+function seedDummyMemosIfNeeded() {
+  if (STATE.memos.length > 0) return false;
+  STATE.memos = createSeedDummyMemos();
+  STATE.layoutCache = Object.create(null);
+  return true;
 }
 
 function loadEasterState() {
@@ -1494,36 +1576,149 @@ function setupButtonSoundUI() {
 }
 
 
-init();
 
-async function init() {
-  await openIDB();
-  await loadStorage();
-  loadEasterState();
-  setupButtonSoundUI();
-  ensureEasterOverlayRoot();
-  const removedLegacyDummyMemoCount = cleanupLegacyDummyMemos();
-  if (removedLegacyDummyMemoCount > 0) persistStorage();
-  seedPlayedEmotionRewardDropsFromExistingMemos();
-  setupUI();
-  renderCategoryChips();
-  syncSelectionUI();
-  setupScene();
-  setupFreezeWatchdog();
-  await loadAssets();
-  buildDeskAndDecor();
-  rebuildVisuals();
-  renderHistory();
-  setupDeviceOrientation();
-  setupInteraction();
-  maybeTriggerReloadRa3();
-  startLoop();
-  STATE.appReady = true;
-  hideLoadingOverlay();
+function getViewportSize() {
+  const vv = window.visualViewport;
+  if (
+    vv &&
+    Number.isFinite(vv.width) &&
+    Number.isFinite(vv.height) &&
+    vv.width > 0 &&
+    vv.height > 0
+  ) {
+    return {
+      width: Math.round(vv.width),
+      height: Math.round(vv.height),
+    };
+  }
+
+  return {
+    width: window.innerWidth || document.documentElement.clientWidth || 1,
+    height: window.innerHeight || document.documentElement.clientHeight || 1,
+  };
+}
+
+function syncAppViewportHeight() {
+  const { height } = getViewportSize();
+  document.documentElement.style.setProperty('--app-vh', `${height}px`);
 }
 
 
+function isMobileGoogleInAppBrowser() {
+  const ua = navigator.userAgent || '';
+  const referrer = document.referrer || '';
+  const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+  if (!isMobile) return false;
+
+  const hasGoogleSearchAppToken = /\bGSA\/\d/i.test(ua) || /GoogleApp|GoogleSearchApp/i.test(ua);
+  const hasGoogleAppReferrer = /googlequicksearchbox/i.test(referrer);
+  const isAndroidWebView = /;\s*wv\)/i.test(ua) || /\bwv\b/i.test(ua);
+
+  return hasGoogleSearchAppToken || hasGoogleAppReferrer || (isAndroidWebView && hasGoogleAppReferrer);
+}
+
+function markBrowserRecommendationDismissed() {
+  STATE.browserRecommendationDismissed = true;
+  try {
+    sessionStorage.setItem(GOOGLE_BROWSER_PROMPT_SESSION_KEY, '1');
+  } catch (error) {
+    console.warn('Browser recommendation session storage unavailable:', error);
+  }
+}
+
+function shouldShowBrowserRecommendationPrompt() {
+  if (!UI.browserRecommendationModal) return false;
+  if (!isMobileGoogleInAppBrowser()) return false;
+  if (STATE.browserRecommendationDismissed) return false;
+
+  try {
+    if (sessionStorage.getItem(GOOGLE_BROWSER_PROMPT_SESSION_KEY) === '1') {
+      STATE.browserRecommendationDismissed = true;
+      return false;
+    }
+  } catch (error) {
+    console.warn('Browser recommendation session storage read failed:', error);
+  }
+
+  return true;
+}
+
+function showBrowserRecommendationPrompt() {
+  if (!shouldShowBrowserRecommendationPrompt()) return;
+  UI.browserRecommendationModal.classList.add('visible');
+}
+
+function hideBrowserRecommendationPrompt() {
+  if (!UI.browserRecommendationModal) return;
+  UI.browserRecommendationModal.classList.remove('visible');
+  markBrowserRecommendationDismissed();
+}
+
+
+init();
+
+async function init() {
+  try {
+    await openIDB();
+    await loadStorage();
+    loadEasterState();
+    setupButtonSoundUI();
+    ensureEasterOverlayRoot();
+    const removedLegacyDummyMemoCount = cleanupLegacyDummyMemos();
+    if (removedLegacyDummyMemoCount > 0) persistStorage();
+    const didSeedDummyMemos = seedDummyMemosIfNeeded();
+    if (didSeedDummyMemos) persistStorage();
+    seedPlayedEmotionRewardDropsFromExistingMemos();
+    setupUI();
+    renderCategoryChips();
+    syncSelectionUI();
+    syncAppViewportHeight();
+    showBrowserRecommendationPrompt();
+    setupScene();
+
+    if (shouldUseDeskFirstLoading()) {
+      primeFallbackTemplatesForDeferredAssets();
+      await loadDeskAsset();
+      buildDeskAndDecor();
+      setupDeviceOrientation();
+      setupInteraction();
+      maybeTriggerReloadRa3();
+      startLoop();
+      STATE.appReady = true;
+      hideLoadingOverlay();
+
+      window.setTimeout(() => {
+        rebuildVisuals();
+        renderHistory();
+      }, 0);
+
+      void loadRemainingAssetsInBackground();
+      return;
+    }
+
+    await loadAssets();
+    buildDeskAndDecor();
+    rebuildVisuals();
+    renderHistory();
+    setupDeviceOrientation();
+    setupInteraction();
+    maybeTriggerReloadRa3();
+    startLoop();
+    STATE.appReady = true;
+    hideLoadingOverlay();
+  } catch (error) {
+    console.error('App init failed:', error);
+    hideLoadingOverlay();
+  }
+}
+
 function setupUI() {
+  if (UI.dismissBrowserRecommendationBtn) {
+    UI.dismissBrowserRecommendationBtn.addEventListener('click', () => {
+      hideBrowserRecommendationPrompt();
+    });
+  }
+
   UI.allowMic.addEventListener('click', async () => {
     const ok = await requestMicrophonePermission();
     if (!ok) return;
@@ -1600,6 +1795,11 @@ function setupUI() {
 
   createLoadingOverlay();
   window.addEventListener('resize', onResize);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', onResize);
+    window.visualViewport.addEventListener('scroll', onResize);
+  }
+  window.addEventListener('orientationchange', onResize);
   window.addEventListener('pointermove', onPointerMove);
   window.addEventListener('pointerleave', hideMemoHover);
   UI.sceneRoot.addEventListener('pointerleave', hideMemoHover);
@@ -2010,8 +2210,7 @@ function updateRoomCopy(memo) {
 }
 
 function setupScene() {
-  const width = UI.sceneRoot.clientWidth || window.innerWidth;
-  const height = UI.sceneRoot.clientHeight || window.innerHeight;
+  const { width, height } = getViewportSize();
   const isMobile = width < 768;
 
   const roomColor = 0xf6f1eb;
@@ -2020,42 +2219,34 @@ function setupScene() {
   STATE.scene.background = new THREE.Color(roomColor);
   STATE.scene.fog = new THREE.FogExp2(roomColor, 0.0018);
 
-  const fov = isMobile ? 54 : 43;
-  STATE.camera = new THREE.PerspectiveCamera(fov, width / height, 0.1, 100);
+  const fov = isMobile ? 50 : 43;
+  STATE.camera = new THREE.PerspectiveCamera(fov, width / Math.max(height, 1), 0.1, 100);
   if (isMobile) {
-    STATE.camera.position.set(-0.2, 7.6, 14.5);
-    STATE.camera.lookAt(-0.2, 0.6, -2.2);
+    STATE.camera.position.set(-0.2, 7.2, 13.2);
+    STATE.camera.lookAt(-0.2, 1.0, -2.2);
   } else {
     STATE.camera.position.set(-0.55, 5.1, 11.6);
     STATE.camera.lookAt(-0.55, 1.35, -2.35);
   }
 
-  const isCoarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? isMobile;
-  STATE.renderer = new THREE.WebGLRenderer({
-    antialias: !isCoarsePointer,
-    alpha: false,
-    powerPreference: 'high-performance',
-  });
-  STATE.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isCoarsePointer ? 1.15 : 1.4));
+  STATE.renderer = new THREE.WebGLRenderer({ antialias: !isMobile, alpha: false, powerPreference: 'high-performance' });
+  STATE.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 1.8));
   STATE.renderer.setSize(width, height);
   STATE.renderer.outputColorSpace = THREE.SRGBColorSpace;
   STATE.renderer.shadowMap.enabled = true;
-  STATE.renderer.shadowMap.type = isCoarsePointer ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
+  STATE.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   STATE.renderer.toneMappingExposure = 1.08;
   UI.sceneRoot.innerHTML = '';
   UI.sceneRoot.appendChild(STATE.renderer.domElement);
-  STATE.renderer.domElement.addEventListener('webglcontextlost', (event) => {
-    event.preventDefault();
-    triggerFreezeReload('webgl-context-lost');
-  }, { passive: false });
 
   const hemi = new THREE.HemisphereLight(0xfffbf4, 0xe9dfd3, 1.7);
   STATE.scene.add(hemi);
 
+  const shadowMapRes = isMobile ? 1024 : 2048;
   const key = new THREE.DirectionalLight(0xffe2c6, 1.9);
   key.position.set(5.6, 9.5, 6.4);
   key.castShadow = true;
-  key.shadow.mapSize.set(isCoarsePointer ? 1024 : 1536, isCoarsePointer ? 1024 : 1536);
+  key.shadow.mapSize.set(shadowMapRes, shadowMapRes);
   key.shadow.camera.left = -14;
   key.shadow.camera.right = 14;
   key.shadow.camera.top = 12;
@@ -2144,142 +2335,98 @@ function getTemplateEntries() {
   ];
 }
 
-function createFallbackTemplate(key, fallbackFactory) {
-  const root = fallbackFactory();
-  root.animations = [];
-  normalizeTemplate(root, key);
-  applyShadowSettings(root);
-  return {
-    key,
-    root,
-    animations: [],
-    isFallback: true,
-  };
+function shouldUseDeskFirstLoading() {
+  return true;
 }
 
-function finalizeTemplateRoot(root, key, animations = [], isFallback = false) {
-  root.animations = animations || [];
+function finalizeTemplateRoot(root, key) {
   normalizeTemplate(root, key);
   applyShadowSettings(root);
   return {
     key,
     root,
     animations: root.animations || [],
-    isFallback,
   };
 }
 
-function primeFallbackTemplates() {
+function createFallbackTemplate(key, fallbackFactory) {
+  const root = fallbackFactory();
+  root.animations = [];
+  return finalizeTemplateRoot(root, key);
+}
+
+function primeFallbackTemplatesForDeferredAssets() {
   getTemplateEntries().forEach(([key, , fallbackFactory]) => {
-    if (STATE.templates[key]) return;
+    if (key === 'desk' || STATE.templates[key]) return;
     STATE.templates[key] = createFallbackTemplate(key, fallbackFactory);
   });
 }
 
-function getDeferredAssetBatchSize() {
-  const isCoarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false;
-  return isCoarsePointer ? GLB_BACKGROUND_BATCH_SIZE_COARSE : GLB_BACKGROUND_BATCH_SIZE_DESKTOP;
-}
+async function loadTemplateEntries(loader, entries) {
+  const results = await Promise.all(
+    entries.map(([key, filename, fallback]) => loadTemplate(loader, key, filename, fallback))
+  );
 
-function waitForDeferredAssetBatchGap() {
-  return new Promise((resolve) => {
-    requestAnimationFrame(() => {
-      setTimeout(resolve, GLB_BACKGROUND_BATCH_DELAY_MS);
-    });
+  entries.forEach(([key], index) => {
+    STATE.templates[key] = results[index];
   });
 }
 
-async function loadTemplateEntries(loader, entries, options = {}) {
-  const batchSize = Math.max(1, Number(options.batchSize) || entries.length || 1);
-  const yieldBetweenBatches = Boolean(options.yieldBetweenBatches);
-  const onBatchLoaded = typeof options.onBatchLoaded === 'function' ? options.onBatchLoaded : null;
-
-  for (let start = 0; start < entries.length; start += batchSize) {
-    const batchEntries = entries.slice(start, start + batchSize);
-    const results = await Promise.all(
-      batchEntries.map(([key, filename, fallback]) => loadTemplate(loader, key, filename, fallback))
-    );
-
-    batchEntries.forEach(([key], index) => {
-      STATE.templates[key] = results[index];
-    });
-
-    if (onBatchLoaded) {
-      onBatchLoaded(batchEntries.map(([key]) => key));
-    }
-
-    if (yieldBetweenBatches && start + batchSize < entries.length) {
-      await waitForDeferredAssetBatchGap();
-    }
-  }
-}
-
-function loadAssets() {
-  primeFallbackTemplates();
-  loadRemainingAssetsInBackground();
+async function loadDeskAsset() {
+  const loader = new GLTFLoader();
+  const deskEntry = getTemplateEntries().filter(([key]) => key === 'desk');
+  await loadTemplateEntries(loader, deskEntry);
 }
 
 async function loadRemainingAssetsInBackground() {
   if (STATE.nonDeskAssetsReady) return;
   if (STATE.remainingAssetLoadPromise) return STATE.remainingAssetLoadPromise;
 
-  STATE.remainingAssetLoadPromise = (async () => {
-    let retries = 0;
-    while (!STATE.nonDeskAssetsReady && retries < GLB_BACKGROUND_MAX_RETRIES) {
-      STATE.assetsLoading = true;
-      try {
-        const loader = new GLTFLoader();
-        await loadTemplateEntries(loader, getTemplateEntries(), {
-          batchSize: getDeferredAssetBatchSize(),
-          yieldBetweenBatches: true,
-          onBatchLoaded: (keys) => {
-            if (keys.includes('desk')) {
-              STATE.pendingDeskDecorRebuild = true;
-            }
-            if (keys.some((key) => key !== 'desk')) {
-              STATE.pendingVisualRebuild = true;
-            }
-          },
-        });
-        STATE.nonDeskAssetsReady = true;
-      } catch (error) {
-        retries += 1;
-        console.warn(`Deferred asset loading attempt ${retries} failed. ${retries < GLB_BACKGROUND_MAX_RETRIES ? 'Retrying...' : 'Keeping fallbacks.'}`, error);
-        if (retries < GLB_BACKGROUND_MAX_RETRIES) {
-          await new Promise((resolve) => setTimeout(resolve, GLB_BACKGROUND_RETRY_DELAY_MS));
-        }
-      } finally {
-        STATE.assetsLoading = false;
-      }
-    }
+  const loader = new GLTFLoader();
+  const deferredEntries = getTemplateEntries().filter(([key]) => key !== 'desk');
 
-    STATE.pendingDeskDecorRebuild = true;
-    STATE.pendingVisualRebuild = true;
-  })();
-
-  STATE.remainingAssetLoadPromise.finally(() => {
-    STATE.remainingAssetLoadPromise = null;
-  });
+  STATE.remainingAssetLoadPromise = loadTemplateEntries(loader, deferredEntries)
+    .then(() => {
+      STATE.nonDeskAssetsReady = true;
+      STATE.pendingVisualRebuild = true;
+      STATE.lastVisualSignature = '';
+    })
+    .catch((error) => {
+      console.warn('Deferred asset loading failed. Keeping fallback templates.', error);
+      STATE.nonDeskAssetsReady = true;
+      STATE.pendingVisualRebuild = true;
+      STATE.lastVisualSignature = '';
+    })
+    .finally(() => {
+      STATE.remainingAssetLoadPromise = null;
+    });
 
   return STATE.remainingAssetLoadPromise;
 }
 
+async function loadAssets() {
+  const loader = new GLTFLoader();
+  await loadTemplateEntries(loader, getTemplateEntries());
+  STATE.nonDeskAssetsReady = true;
+}
+
 async function loadTemplate(loader, key, filename, fallbackFactory) {
+  let root;
+
   try {
-    const loadPromise = loader.loadAsync(`./assets/${filename}`);
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error(`Timeout loading ${filename}`)), GLB_LOAD_TIMEOUT_MS);
-    });
-    const gltf = await Promise.race([loadPromise, timeoutPromise]);
-    return finalizeTemplateRoot(gltf.scene, key, gltf.animations || [], false);
+    const gltf = await loader.loadAsync(`./assets/${filename}`);
+    root = gltf.scene;
+    root.animations = gltf.animations || [];
   } catch (error) {
-    console.warn(`Failed to load ${filename}. Keeping fallback.`, error);
-    return STATE.templates[key] || createFallbackTemplate(key, fallbackFactory);
+    console.warn(`Failed to load ${filename}. Using fallback.`, error);
+    root = fallbackFactory();
+    root.animations = [];
   }
+
+  return finalizeTemplateRoot(root, key);
 }
 
 function normalizeTemplate(root, key) {
-
   const box = new THREE.Box3().setFromObject(root);
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
@@ -2309,38 +2456,6 @@ function applyShadowSettings(object) {
   });
 }
 
-
-
-function triggerFreezeReload(reason = 'freeze-watchdog') {
-  if (STATE.freezeReloadTriggered) return;
-  STATE.freezeReloadTriggered = true;
-  console.warn(`[freeze-reload] ${reason}`);
-  window.setTimeout(() => {
-    window.location.reload();
-  }, 30);
-}
-
-function setupFreezeWatchdog() {
-  if (STATE.freezeWatchdogTimer) return;
-
-  STATE.freezeWatchdogTimer = window.setInterval(() => {
-    if (!STATE.loopStarted || STATE.freezeReloadTriggered) return;
-
-    const now = performance.now();
-    if (now - STATE.loopStartedAt < FREEZE_RELOAD_STARTUP_GRACE_MS) return;
-
-    const staleMs = now - STATE.lastFrameHeartbeat;
-    if (staleMs >= FREEZE_RELOAD_THRESHOLD_MS) {
-      STATE.freezeStaleStrikeCount += 1;
-      if (STATE.freezeStaleStrikeCount >= FREEZE_RELOAD_STALE_STRIKES_REQUIRED) {
-        triggerFreezeReload('frame-heartbeat-stale');
-      }
-      return;
-    }
-
-    STATE.freezeStaleStrikeCount = 0;
-  }, FREEZE_RELOAD_CHECK_MS);
-}
 
 const TMP_BOX_3 = new THREE.Box3();
 const TMP_VEC3_A = new THREE.Vector3();
@@ -2445,7 +2560,7 @@ function analyzeDeskSurface() {
     for (let iz = 0; iz < stepsZ; iz += 1) {
       const x = THREE.MathUtils.lerp(box.min.x + padX, box.max.x - padX, ix / Math.max(stepsX - 1, 1));
       const z = THREE.MathUtils.lerp(box.min.z + padZ, box.max.z - padZ, iz / Math.max(stepsZ - 1, 1));
-      DESK_RAYCASTER.set(new THREE.Vector3(x, originY, z), new THREE.Vector3(0, -1, 0));
+      DESK_RAYCASTER.set(_RAYCAST_ORIGIN.set(x, originY, z), _RAYCAST_DOWN_DIR);
       const hits = DESK_RAYCASTER.intersectObjects(meshes, false);
       const hit = hits.find((entry) => {
         const worldNormal = getWorldUpNormal(entry);
@@ -2499,6 +2614,9 @@ function analyzeDeskSurface() {
   };
 }
 
+const _RAYCAST_DOWN_DIR = new THREE.Vector3(0, -1, 0);
+const _RAYCAST_ORIGIN = new THREE.Vector3();
+
 function findClosestHorizontalSurfacePoint(meshes, bounds, targetY, tolerance, x, z, options = {}) {
   if (!meshes?.length || !bounds) return null;
 
@@ -2516,7 +2634,8 @@ function findClosestHorizontalSurfacePoint(meshes, bounds, targetY, tolerance, x
     for (let iz = -steps; iz <= steps; iz += 1) {
       const sampleX = x + ((steps ? ix / steps : 0) * searchRadius);
       const sampleZ = z + ((steps ? iz / steps : 0) * searchRadius);
-      DESK_RAYCASTER.set(new THREE.Vector3(sampleX, originY, sampleZ), new THREE.Vector3(0, -1, 0));
+      _RAYCAST_ORIGIN.set(sampleX, originY, sampleZ);
+      DESK_RAYCASTER.set(_RAYCAST_ORIGIN, _RAYCAST_DOWN_DIR);
       const hits = DESK_RAYCASTER.intersectObjects(meshes, false);
 
       hits.forEach((hit) => {
@@ -2578,7 +2697,7 @@ function analyzeChairSeatSurface() {
     for (let iz = 0; iz < stepsZ; iz += 1) {
       const x = THREE.MathUtils.lerp(minX, maxX, ix / Math.max(stepsX - 1, 1));
       const z = THREE.MathUtils.lerp(minZ, maxZ, iz / Math.max(stepsZ - 1, 1));
-      DESK_RAYCASTER.set(new THREE.Vector3(x, originY, z), new THREE.Vector3(0, -1, 0));
+      DESK_RAYCASTER.set(_RAYCAST_ORIGIN.set(x, originY, z), _RAYCAST_DOWN_DIR);
       const hits = DESK_RAYCASTER.intersectObjects(deskMeshes, false);
       const hit = hits.find((entry) => {
         const worldNormal = getWorldUpNormal(entry);
@@ -2787,16 +2906,16 @@ function syncHoverProxyBounds(proxy, owner) {
   proxy.updateMatrixWorld(true);
 }
 
+const SHARED_HOVER_PROXY_GEO = new THREE.BoxGeometry(1, 1, 1);
+const SHARED_HOVER_PROXY_MAT = new THREE.MeshBasicMaterial({
+  transparent: true,
+  opacity: 0,
+  depthWrite: false,
+  colorWrite: false,
+});
+
 function createMemoHoverProxy(object) {
-  const proxy = new THREE.Mesh(
-    new THREE.BoxGeometry(1, 1, 1),
-    new THREE.MeshBasicMaterial({
-      transparent: true,
-      opacity: 0,
-      depthWrite: false,
-      colorWrite: false,
-    }),
-  );
+  const proxy = new THREE.Mesh(SHARED_HOVER_PROXY_GEO, SHARED_HOVER_PROXY_MAT);
 
   proxy.userData.memoVisual = true;
   proxy.userData.hoverOwner = object;
@@ -2893,7 +3012,7 @@ function createAssetInstance(key) {
   const template = STATE.templates[key];
   const root = template.animations.length ? cloneSkeleton(template.root) : template.root.clone(true);
   root.userData.assetKey = key;
-  applyShadowSettings(root);
+  /* Shadow settings are inherited from the template — no need to re-traverse */
 
   let mixer = null;
   let action = null;
@@ -4313,8 +4432,7 @@ function disposeVisuals() {
 
     if (visual.hoverProxy) {
       STATE.scene.remove(visual.hoverProxy);
-      visual.hoverProxy.geometry?.dispose?.();
-      visual.hoverProxy.material?.dispose?.();
+      /* shared geometry/material — do NOT dispose */
     }
 
     STATE.scene.remove(visual.object);
@@ -4339,8 +4457,7 @@ function disposeSingleVisual(visual) {
 
   if (visual.hoverProxy) {
     STATE.scene.remove(visual.hoverProxy);
-    visual.hoverProxy.geometry?.dispose?.();
-    visual.hoverProxy.material?.dispose?.();
+    /* shared geometry/material — do NOT dispose */
   }
 
   STATE.scene.remove(visual.object);
@@ -5359,13 +5476,7 @@ function hideMemoHover() {
 }
 
 function startLoop() {
-  if (STATE.loopStarted) return;
-  STATE.loopStarted = true;
-  STATE.loopStartedAt = performance.now();
-  STATE.lastFrameHeartbeat = performance.now();
-
   const frame = () => {
-    STATE.lastFrameHeartbeat = performance.now();
     const delta = Math.min(STATE.clock.getDelta(), 0.033);
     const now = Date.now();
 
@@ -5387,16 +5498,17 @@ function startLoop() {
 
     STATE.visuals.forEach((visual) => {
       if (visual.kind !== 'asset' || !visual.hoverProxy || !visual.object) return;
-      syncHoverProxyBounds(visual.hoverProxy, visual.object);
-      if (!visual.phys) initVisualPhysics(visual);
+      /* Auto-init physics for newly created visuals */
+      if (!visual.phys) {
+        initVisualPhysics(visual);
+        syncHoverProxyBounds(visual.hoverProxy, visual.object);
+        return;
+      }
+      /* Only re-sync bounds when the object is actually moving */
+      if (visual.dropIntro || !visual.phys.settled) {
+        syncHoverProxyBounds(visual.hoverProxy, visual.object);
+      }
     });
-
-    if (STATE.pendingDeskDecorRebuild) {
-      STATE.pendingDeskDecorRebuild = false;
-      snapshotLiveVisualTransformsToLayoutCache();
-      buildDeskAndDecor();
-      STATE.pendingVisualRebuild = true;
-    }
 
     if (STATE.pendingVisualRebuild) {
       STATE.pendingVisualRebuild = false;
@@ -5423,32 +5535,30 @@ function startLoop() {
   requestAnimationFrame(frame);
 }
 
-
 function buildVisualSignature() {
-  return STATE.memos
-    .map((memo) => {
-      if (memo.clearedAt) return `${memo.id}:cleared`;
-      const ageDays = getAgeDays(memo.createdAt, Date.now());
-
-      if (memo.category === 'emotion') {
-        return `${memo.id}:emotion-${getEmotionDecayAssetKey(memo, Date.now())}`;
-      }
-
-      if (memo.category === 'clutter') return `${memo.id}:clutter-${ageDays >= CLUTTER_MERGE_DAYS ? 'old' : 'fresh'}`;
-      if (memo.category === 'routine') return `${memo.id}:routine-${ageDays >= ROUTINE_SCATTER_DAYS ? 'scattered' : 'folded'}`;
-      return `${memo.id}:active`;
-    })
-    .join('|');
+  const nowMs = Date.now();
+  let sig = '';
+  for (let i = 0; i < STATE.memos.length; i++) {
+    const memo = STATE.memos[i];
+    if (i > 0) sig += '|';
+    if (memo.clearedAt) { sig += memo.id; sig += ':cleared'; continue; }
+    const ageDays = getAgeDays(memo.createdAt, nowMs);
+    if (memo.category === 'emotion') { sig += memo.id; sig += ':emotion-'; sig += getEmotionDecayAssetKey(memo, nowMs); continue; }
+    if (memo.category === 'clutter') { sig += memo.id; sig += ageDays >= CLUTTER_MERGE_DAYS ? ':clutter-old' : ':clutter-fresh'; continue; }
+    if (memo.category === 'routine') { sig += memo.id; sig += ageDays >= ROUTINE_SCATTER_DAYS ? ':routine-scattered' : ':routine-folded'; continue; }
+    sig += memo.id; sig += ':active';
+  }
+  return sig;
 }
 
 function updateCamera(delta) {
   const isMobile = (window.innerWidth || 768) < 768;
   if (isMobile) {
     const baseX = -0.2;
-    const baseY = 7.6;
+    const baseY = 7.2;
     STATE.camera.position.x = THREE.MathUtils.lerp(STATE.camera.position.x, baseX + STATE.pointer.x * 0.1, delta * 1.2);
     STATE.camera.position.y = THREE.MathUtils.lerp(STATE.camera.position.y, baseY + STATE.pointer.y * 0.05, delta * 1.2);
-    STATE.camera.lookAt(-0.2, 0.6, -2.2);
+    STATE.camera.lookAt(-0.2, 1.0, -2.2);
   } else {
     const targetX = -0.55 + STATE.pointer.x * 0.22;
     const targetY = 5.1 + STATE.pointer.y * 0.12;
@@ -5460,15 +5570,16 @@ function updateCamera(delta) {
 
 function onResize() {
   if (!STATE.camera || !STATE.renderer) return;
-  const width = UI.sceneRoot.clientWidth || window.innerWidth;
-  const height = UI.sceneRoot.clientHeight || window.innerHeight;
+  syncAppViewportHeight();
+  const { width, height } = getViewportSize();
   const isMobile = width < 768;
-  STATE.camera.fov = isMobile ? 54 : 43;
-  STATE.camera.aspect = width / height;
+  STATE.camera.fov = isMobile ? 50 : 43;
+  STATE.camera.aspect = width / Math.max(height, 1);
   STATE.camera.updateProjectionMatrix();
-  STATE.renderer.setSize(width, height);
+  STATE.renderer.setSize(width, height, false);
   if (isMobile) {
-    STATE.camera.position.set(-0.2, 7.6, 14.5);
+    STATE.camera.position.set(-0.2, 7.2, 13.2);
+    STATE.camera.lookAt(-0.2, 1.0, -2.2);
   }
 }
 
@@ -5516,9 +5627,9 @@ function applyFloorOnlyScaleIfNeeded(object, targetY) {
 function restObjectOnY(object, targetY) {
   applyFloorOnlyScaleIfNeeded(object, targetY);
   object.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(object);
-  if (!Number.isFinite(box.min.y)) return;
-  object.position.y += targetY - box.min.y;
+  TMP_BOX_3.setFromObject(object);
+  if (!Number.isFinite(TMP_BOX_3.min.y)) return;
+  object.position.y += targetY - TMP_BOX_3.min.y;
   object.updateMatrixWorld(true);
 }
 
@@ -5919,17 +6030,104 @@ function getPhysicsFriction(memo) {
   return THREE.MathUtils.lerp(PHYSICS_FRICTION_RECENT, PHYSICS_FRICTION_OLD, clamp(t, 0, 1));
 }
 
+function getDeskCollisionBounds() {
+  const bounds = getDeskSurfaceBounds();
+  if (!bounds) return null;
+
+  return {
+    minX: bounds.minX + DESK_SURFACE_SIDE_INSET,
+    maxX: bounds.maxX - DESK_SURFACE_SIDE_INSET,
+    minZ: bounds.minZ + DESK_SURFACE_BACK_INSET,
+    maxZ: bounds.maxZ - DESK_SURFACE_FRONT_INSET,
+  };
+}
+
+function isInsideDeskCollisionBounds(x, z) {
+  const bounds = getDeskCollisionBounds();
+  if (!bounds) return false;
+  return x >= bounds.minX && x <= bounds.maxX && z >= bounds.minZ && z <= bounds.maxZ;
+}
+
+function resolveDeskObstacleCollision(prevX, prevZ, nextX, nextZ) {
+  const bounds = getDeskCollisionBounds();
+  if (!bounds) return null;
+  if (!isInsideDeskCollisionBounds(nextX, nextZ)) return null;
+
+  const insidePrev = prevX >= bounds.minX && prevX <= bounds.maxX && prevZ >= bounds.minZ && prevZ <= bounds.maxZ;
+  const leftPen = Math.abs(nextX - bounds.minX);
+  const rightPen = Math.abs(bounds.maxX - nextX);
+  const backPen = Math.abs(nextZ - bounds.minZ);
+  const frontPen = Math.abs(bounds.maxZ - nextZ);
+
+  if (!insidePrev) {
+    const crossFromLeft = prevX < bounds.minX;
+    const crossFromRight = prevX > bounds.maxX;
+    const crossFromBack = prevZ < bounds.minZ;
+    const crossFromFront = prevZ > bounds.maxZ;
+
+    if (crossFromLeft && leftPen <= rightPen && leftPen <= backPen && leftPen <= frontPen) {
+      return { x: bounds.minX - DESK_OBSTACLE_EPSILON, z: nextZ, axisX: true, axisZ: false };
+    }
+    if (crossFromRight && rightPen <= leftPen && rightPen <= backPen && rightPen <= frontPen) {
+      return { x: bounds.maxX + DESK_OBSTACLE_EPSILON, z: nextZ, axisX: true, axisZ: false };
+    }
+    if (crossFromBack && backPen <= frontPen && backPen <= leftPen && backPen <= rightPen) {
+      return { x: nextX, z: bounds.minZ - DESK_OBSTACLE_EPSILON, axisX: false, axisZ: true };
+    }
+    if (crossFromFront && frontPen <= backPen && frontPen <= leftPen && frontPen <= rightPen) {
+      return { x: nextX, z: bounds.maxZ + DESK_OBSTACLE_EPSILON, axisX: false, axisZ: true };
+    }
+  }
+
+  const minPen = Math.min(leftPen, rightPen, backPen, frontPen);
+  if (minPen == leftPen) return { x: bounds.minX - DESK_OBSTACLE_EPSILON, z: nextZ, axisX: true, axisZ: false };
+  if (minPen == rightPen) return { x: bounds.maxX + DESK_OBSTACLE_EPSILON, z: nextZ, axisX: true, axisZ: false };
+  if (minPen == backPen) return { x: nextX, z: bounds.minZ - DESK_OBSTACLE_EPSILON, axisX: false, axisZ: true };
+  return { x: nextX, z: bounds.maxZ + DESK_OBSTACLE_EPSILON, axisX: false, axisZ: true };
+}
+
+function getDeskLandingStateAt(x, z) {
+  const bounds = getDeskCollisionBounds();
+  const deskTopY = STATE.room?.deskTopY ?? 1.28;
+  if (!bounds) return { onDesk: false, targetY: PHYSICS_FLOOR_Y };
+
+  const insideDesk = x >= bounds.minX
+    && x <= bounds.maxX
+    && z >= bounds.minZ
+    && z <= bounds.maxZ;
+
+  return insideDesk
+    ? { onDesk: true, targetY: deskTopY }
+    : { onDesk: false, targetY: PHYSICS_FLOOR_Y };
+}
+
+function settleVisualAtCurrentXZ(visual) {
+  if (!visual?.object || !visual?.phys) return;
+  const landing = getDeskLandingStateAt(visual.object.position.x, visual.object.position.z);
+  restObjectOnY(visual.object, landing.targetY);
+  visual.phys.onDesk = landing.onDesk;
+  visual.phys.airborne = false;
+  visual.phys.vy = 0;
+  visual.phys.restX = visual.object.position.x;
+  visual.phys.restZ = visual.object.position.z;
+  visual.phys.settled = true;
+  visual.object.updateMatrixWorld(true);
+}
+
 function initVisualPhysics(visual) {
   if (!visual || visual.kind !== 'asset') return;
   const memo = visual.memoIds?.length ? STATE.memos.find((m) => m.id === visual.memoIds[0]) : null;
+  const landing = getDeskLandingStateAt(visual.object?.position.x ?? 0, visual.object?.position.z ?? 0);
   visual.phys = {
     vx: 0,
+    vy: 0,
     vz: 0,
     friction: getPhysicsFriction(memo),
     restX: visual.object?.position.x ?? 0,
     restZ: visual.object?.position.z ?? 0,
     settled: true,
-    onDesk: visual.object?.position.y > 0.5,
+    onDesk: landing.onDesk,
+    airborne: false,
   };
 }
 
@@ -5940,45 +6138,46 @@ function updatePhysics(delta) {
   const forceX = STATE.tilt.x;
   const forceZ = STATE.tilt.z;
   const hasForce = Math.abs(forceX) > 0.0003 || Math.abs(forceZ) > 0.0003;
-  const memoById = new Map();
-  STATE.memos.forEach((memo) => {
-    if (memo?.id) memoById.set(memo.id, memo);
-  });
 
-  const activeVisuals = [];
+  const memoMap = new Map();
+  for (let i = 0; i < STATE.memos.length; i++) {
+    const m = STATE.memos[i];
+    if (m && m.id) memoMap.set(m.id, m);
+  }
+
+  const activeDeskVisuals = [];
   STATE.visuals.forEach((visual) => {
     if (visual.kind !== 'asset' || !visual.object || !visual.phys) return;
     if (visual === STATE.grabbedVisual) return;
     if (visual.dropIntro) return;
-    const memoId = visual.memoIds?.length ? visual.memoIds[0] : null;
-    const memo = memoId ? memoById.get(memoId) : null;
+    const memo = visual.memoIds?.length ? memoMap.get(visual.memoIds[0]) || null : null;
     if (isRecentPhysicsLockedMemo(memo)) return;
-    activeVisuals.push(visual);
+    if (visual.phys.airborne) return;
+    if (!visual.phys.onDesk) return;
+    activeDeskVisuals.push(visual);
   });
 
   const sepImpulses = new Map();
-  if (activeVisuals.length <= PHYSICS_MAX_SEPARATION_VISUALS) {
-    for (let i = 0; i < activeVisuals.length; i++) {
-      const a = activeVisuals[i];
-      if (!sepImpulses.has(a)) sepImpulses.set(a, { x: 0, z: 0 });
-      for (let j = i + 1; j < activeVisuals.length; j++) {
-        const b = activeVisuals[j];
-        if (!sepImpulses.has(b)) sepImpulses.set(b, { x: 0, z: 0 });
-        const dx = a.object.position.x - b.object.position.x;
-        const dz = a.object.position.z - b.object.position.z;
-        const dist = Math.sqrt(dx * dx + dz * dz);
-        if (dist < PHYSICS_SEPARATION_RADIUS && dist > 0.001) {
-          const overlap = (PHYSICS_SEPARATION_RADIUS - dist) / PHYSICS_SEPARATION_RADIUS;
-          const strength = overlap * overlap * PHYSICS_SEPARATION_FORCE;
-          const nx = dx / dist;
-          const nz = dz / dist;
-          const impA = sepImpulses.get(a);
-          const impB = sepImpulses.get(b);
-          impA.x += nx * strength;
-          impA.z += nz * strength;
-          impB.x -= nx * strength;
-          impB.z -= nz * strength;
-        }
+  for (let i = 0; i < activeDeskVisuals.length; i++) {
+    const a = activeDeskVisuals[i];
+    if (!sepImpulses.has(a)) sepImpulses.set(a, { x: 0, z: 0 });
+    for (let j = i + 1; j < activeDeskVisuals.length; j++) {
+      const b = activeDeskVisuals[j];
+      if (!sepImpulses.has(b)) sepImpulses.set(b, { x: 0, z: 0 });
+      const dx = a.object.position.x - b.object.position.x;
+      const dz = a.object.position.z - b.object.position.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist < PHYSICS_SEPARATION_RADIUS && dist > 0.001) {
+        const overlap = (PHYSICS_SEPARATION_RADIUS - dist) / PHYSICS_SEPARATION_RADIUS;
+        const strength = overlap * overlap * PHYSICS_SEPARATION_FORCE;
+        const nx = dx / dist;
+        const nz = dz / dist;
+        const impA = sepImpulses.get(a);
+        const impB = sepImpulses.get(b);
+        impA.x += nx * strength;
+        impA.z += nz * strength;
+        impB.x -= nx * strength;
+        impB.z -= nz * strength;
       }
     }
   }
@@ -5989,64 +6188,150 @@ function updatePhysics(delta) {
     if (visual.dropIntro) return;
 
     const p = visual.phys;
-    const memoId = visual.memoIds?.length ? visual.memoIds[0] : null;
-    const memo = memoId ? memoById.get(memoId) : null;
+    const memo = visual.memoIds?.length ? memoMap.get(visual.memoIds[0]) || null : null;
     p.friction = getPhysicsFriction(memo);
 
-    if (isRecentPhysicsLockedMemo(memo)) {
+    if (isRecentPhysicsLockedMemo(memo) && !p.airborne) {
       p.vx = 0;
+      p.vy = 0;
       p.vz = 0;
-      p.settled = true;
-      visual.object.position.x = p.restX;
-      visual.object.position.z = p.restZ;
+      settleVisualAtCurrentXZ(visual);
+      return;
+    }
+
+    if (p.airborne) {
+      const prevX = visual.object.position.x;
+      const prevY = visual.object.position.y;
+      const prevZ = visual.object.position.z;
+
+      p.vy -= PHYSICS_AIR_GRAVITY;
+      visual.object.position.x += p.vx;
+      visual.object.position.y += p.vy;
+      visual.object.position.z += p.vz;
+
+      const b = PHYSICS_ROOM_BOUNDS;
+      if (visual.object.position.x < b.minX) { visual.object.position.x = b.minX; p.vx *= -PHYSICS_BOUNCE_FACTOR; }
+      if (visual.object.position.x > b.maxX) { visual.object.position.x = b.maxX; p.vx *= -PHYSICS_BOUNCE_FACTOR; }
+      if (visual.object.position.z < b.minZ) { visual.object.position.z = b.minZ; p.vz *= -PHYSICS_BOUNCE_FACTOR; }
+      if (visual.object.position.z > b.maxZ) { visual.object.position.z = b.maxZ; p.vz *= -PHYSICS_BOUNCE_FACTOR; }
+
+      const landing = getDeskLandingStateAt(visual.object.position.x, visual.object.position.z);
+      const deskTopY = STATE.room?.deskTopY ?? 1.28;
+      const crossedDeskTopFromAbove = landing.onDesk
+        && prevY >= deskTopY + 0.04
+        && visual.object.position.y <= deskTopY
+        && p.vy <= 0;
+
+      if (crossedDeskTopFromAbove) {
+        restObjectOnY(visual.object, deskTopY);
+        p.onDesk = true;
+        p.airborne = false;
+        p.vy = 0;
+        p.restX = visual.object.position.x;
+        p.restZ = visual.object.position.z;
+        p.settled = false;
+        visual.object.updateMatrixWorld(true);
+        return;
+      }
+
+      if (visual.object.position.y <= PHYSICS_FLOOR_Y && p.vy <= 0) {
+        restObjectOnY(visual.object, PHYSICS_FLOOR_Y);
+        p.onDesk = false;
+        p.airborne = false;
+        p.vy = 0;
+        p.restX = visual.object.position.x;
+        p.restZ = visual.object.position.z;
+        p.settled = false;
+        visual.object.updateMatrixWorld(true);
+        return;
+      }
+
+      if (visual.object.position.y <= deskTopY - 0.08) {
+        const obstacleHit = resolveDeskObstacleCollision(prevX, prevZ, visual.object.position.x, visual.object.position.z);
+        if (obstacleHit) {
+          visual.object.position.x = obstacleHit.x;
+          visual.object.position.z = obstacleHit.z;
+          if (obstacleHit.axisX) p.vx *= -PHYSICS_BOUNCE_FACTOR;
+          if (obstacleHit.axisZ) p.vz *= -PHYSICS_BOUNCE_FACTOR;
+        }
+      }
+
       visual.object.updateMatrixWorld(true);
       return;
     }
 
-    const tiltScale = p.onDesk ? 0.15 : 1.0;
-
-    if (hasForce) {
-      p.vx += forceX * (1 - p.friction) * 3.0 * tiltScale;
-      p.vz += forceZ * (1 - p.friction) * 3.0 * tiltScale;
-      p.settled = false;
-    }
-
-    const sep = sepImpulses.get(visual);
-    if (sep && (Math.abs(sep.x) > 0.0001 || Math.abs(sep.z) > 0.0001)) {
-      p.vx += sep.x;
-      p.vz += sep.z;
-      p.settled = false;
-    }
-
-    p.vx *= p.friction;
-    p.vz *= p.friction;
-
-    const speed = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
-    if (speed > PHYSICS_MAX_VELOCITY) {
-      const scale = PHYSICS_MAX_VELOCITY / speed;
-      p.vx *= scale;
-      p.vz *= scale;
-    }
-
-    if (speed < PHYSICS_REST_THRESHOLD && !hasForce) {
-      if (!p.settled) {
-        const dx = p.restX - visual.object.position.x;
-        const dz = p.restZ - visual.object.position.z;
-        const returnDist = Math.sqrt(dx * dx + dz * dz);
-        if (returnDist > 0.01) {
-          visual.object.position.x += dx * 0.03;
-          visual.object.position.z += dz * 0.03;
-        } else {
-          visual.object.position.x = p.restX;
-          visual.object.position.z = p.restZ;
-          p.settled = true;
-        }
+    if (p.onDesk) {
+      if (hasForce) {
+        p.vx += forceX * (1 - p.friction) * 0.8;
+        p.vz += forceZ * (1 - p.friction) * 0.8;
+        p.settled = false;
       }
-      p.vx = 0;
-      p.vz = 0;
+
+      const sep = sepImpulses.get(visual);
+      if (sep && (Math.abs(sep.x) > 0.0001 || Math.abs(sep.z) > 0.0001)) {
+        p.vx += sep.x;
+        p.vz += sep.z;
+        p.settled = false;
+      }
+
+      p.vx *= p.friction;
+      p.vz *= p.friction;
+
+      const speed = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
+      if (speed > PHYSICS_MAX_VELOCITY) {
+        const scale = PHYSICS_MAX_VELOCITY / speed;
+        p.vx *= scale;
+        p.vz *= scale;
+      }
+
+      if (speed < PHYSICS_REST_THRESHOLD && !hasForce) {
+        p.vx = 0;
+        p.vz = 0;
+        p.settled = true;
+        visual.object.updateMatrixWorld(true);
+        return;
+      }
+
+      visual.object.position.x += p.vx;
+      visual.object.position.z += p.vz;
+
+      const deskLanding = getDeskLandingStateAt(visual.object.position.x, visual.object.position.z);
+      if (!deskLanding.onDesk) {
+        p.airborne = true;
+        p.onDesk = false;
+        p.vy = PHYSICS_DESK_EDGE_FALL_SPEED;
+        visual.object.updateMatrixWorld(true);
+        return;
+      }
+
+      restObjectOnY(visual.object, deskLanding.targetY);
+      p.restX = visual.object.position.x;
+      p.restZ = visual.object.position.z;
+      visual.object.updateMatrixWorld(true);
       return;
     }
 
+    if (hasForce) {
+      p.vx += forceX * (1 - p.friction) * 0.8;
+      p.vz += forceZ * (1 - p.friction) * 0.8;
+      p.settled = false;
+    }
+
+    p.vx *= PHYSICS_FLOOR_ROLL_FRICTION;
+    p.vz *= PHYSICS_FLOOR_ROLL_FRICTION;
+
+    const floorSpeed = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
+    if (floorSpeed < PHYSICS_REST_THRESHOLD && !hasForce) {
+      p.vx = 0;
+      p.vz = 0;
+      p.settled = true;
+      restObjectOnY(visual.object, PHYSICS_FLOOR_Y);
+      visual.object.updateMatrixWorld(true);
+      return;
+    }
+
+    const prevX = visual.object.position.x;
+    const prevZ = visual.object.position.z;
     visual.object.position.x += p.vx;
     visual.object.position.z += p.vz;
 
@@ -6056,53 +6341,71 @@ function updatePhysics(delta) {
     if (visual.object.position.z < b.minZ) { visual.object.position.z = b.minZ; p.vz *= -PHYSICS_BOUNCE_FACTOR; }
     if (visual.object.position.z > b.maxZ) { visual.object.position.z = b.maxZ; p.vz *= -PHYSICS_BOUNCE_FACTOR; }
 
+    restObjectOnY(visual.object, PHYSICS_FLOOR_Y);
+    p.onDesk = false;
+    p.restX = visual.object.position.x;
+    p.restZ = visual.object.position.z;
+    p.settled = false;
     visual.object.updateMatrixWorld(true);
   });
 }
 
 /* ═══ Long-Press / Drag / Throw Interaction ═══ */
-
 function setupInteraction() {
   const canvas = STATE.renderer?.domElement;
   if (!canvas) return;
 
-  const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-  const intersectPoint = new THREE.Vector3();
   const pointerRay = new THREE.Raycaster();
+  const _ndcVec = new THREE.Vector2();
 
   function getNDC(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
-    return new THREE.Vector2(
+    return _ndcVec.set(
       ((clientX - rect.left) / rect.width) * 2 - 1,
       -((clientY - rect.top) / rect.height) * 2 + 1,
     );
+  }
+
+  function findVisualFromObjectChain(object) {
+    let current = object;
+    while (current) {
+      const directVisual = STATE.visuals.find((v) => v.kind === 'asset' && v.object === current);
+      if (directVisual) return directVisual;
+      const ownerVisual = STATE.visuals.find((v) => v.kind === 'asset' && v.object === current.userData?.hoverOwner);
+      if (ownerVisual) return ownerVisual;
+      current = current.parent;
+    }
+    return null;
   }
 
   function findVisualFromIntersect(clientX, clientY) {
     const ndc = getNDC(clientX, clientY);
     pointerRay.setFromCamera(ndc, STATE.camera);
 
-    const meshes = [];
-    STATE.visuals.forEach((v) => {
-      if (v.kind !== 'asset' || !v.object) return;
-      if (v.hoverProxy) meshes.push(v.hoverProxy);
-      v.object.traverse((child) => { if (child.isMesh) meshes.push(child); });
-    });
-
-    const hits = pointerRay.intersectObjects(meshes, false);
-    if (!hits.length) return null;
-
-    for (const hit of hits) {
-      const root = findMemoHoverRoot(hit.object);
-      if (!root) continue;
-      const visual = STATE.visuals.find((v) => v.object === root || v.object === root.userData?.hoverOwner);
-      if (visual) return visual;
-      /* Try via hoverOwner */
-      if (root.userData?.hoverOwner) {
-        const ownerVisual = STATE.visuals.find((v) => v.object === root.userData.hoverOwner);
-        if (ownerVisual) return ownerVisual;
-      }
+    const proxyMeshes = [];
+    for (let i = 0; i < STATE.visuals.length; i++) {
+      const v = STATE.visuals[i];
+      if (v.kind !== 'asset' || !v.object) continue;
+      if (v.hoverProxy) proxyMeshes.push(v.hoverProxy);
     }
+
+    const proxyHits = pointerRay.intersectObjects(proxyMeshes, false);
+    for (const hit of proxyHits) {
+      const visual = findVisualFromObjectChain(hit.object);
+      if (visual) return visual;
+    }
+
+    const assetRoots = [];
+    for (let i = 0; i < STATE.visuals.length; i++) {
+      const v = STATE.visuals[i];
+      if (v.kind === 'asset' && v.object) assetRoots.push(v.object);
+    }
+    const meshHits = pointerRay.intersectObjects(assetRoots, true);
+    for (const hit of meshHits) {
+      const visual = findVisualFromObjectChain(hit.object);
+      if (visual) return visual;
+    }
+
     return null;
   }
 
@@ -6119,68 +6422,59 @@ function setupInteraction() {
     if (event.button && event.button !== 0) return;
     if (!UI.entryPanel.classList.contains('hidden') || !UI.historyPanel.classList.contains('hidden')) return;
 
+    const visual = findVisualFromIntersect(event.clientX, event.clientY);
+    if (!visual || visual.kind !== 'asset' || !visual.object) return;
+
+    const now = Date.now();
     const gs = {
-      startTime: Date.now(),
+      startTime: now,
       startX: event.clientX,
       startY: event.clientY,
       pointerId: event.pointerId,
-      isDragging: false,
-      velocityHistory: [],
+      isDragging: true,
+      velocityHistory: [{ x: event.clientX, y: event.clientY, t: now }],
       lastX: event.clientX,
       lastY: event.clientY,
-      lastTime: Date.now(),
-      liftY: 0.6,
+      lastTime: now,
+      liftY: Math.max(visual.object.position.y + 0.9, 1.2),
     };
+
     STATE.grabState = gs;
-
-    /* Start long-press timer */
-    clearTimeout(STATE.longPressTimer);
-    STATE.longPressTimer = setTimeout(() => {
-      if (!STATE.grabState || STATE.grabState.pointerId !== gs.pointerId) return;
-      const visual = findVisualFromIntersect(gs.startX, gs.startY);
-      if (!visual || visual.kind !== 'asset' || !visual.object) { STATE.grabState = null; return; }
-
-      STATE.grabbedVisual = visual;
-      gs.isDragging = true;
-      gs.liftY = visual.object.position.y + 0.6;
-
-      /* Haptic feedback if available */
-      if (navigator.vibrate) navigator.vibrate(25);
-
-      canvas.style.cursor = 'grabbing';
-      canvas.setPointerCapture(gs.pointerId);
-    }, LONG_PRESS_MS);
+    STATE.grabbedVisual = visual;
+    if (visual.phys) {
+      visual.phys.vx = 0;
+      visual.phys.vy = 0;
+      visual.phys.vz = 0;
+      visual.phys.airborne = false;
+    }
+    canvas.style.cursor = 'grabbing';
+    try { canvas.setPointerCapture(gs.pointerId); } catch (e) { /* ignore */ }
+    if (navigator.vibrate) navigator.vibrate(20);
   }
 
   function onPointerMove(event) {
     if (!STATE.grabState) return;
     const gs = STATE.grabState;
-
-    /* Check if finger moved too far before long-press triggers → cancel */
-    if (!gs.isDragging) {
-      const dx = event.clientX - gs.startX;
-      const dy = event.clientY - gs.startY;
-      if (Math.sqrt(dx * dx + dy * dy) > DRAG_DEAD_ZONE) {
-        clearTimeout(STATE.longPressTimer);
-        STATE.grabState = null;
-        return;
-      }
-      return;
-    }
-
-    /* Dragging */
     const visual = STATE.grabbedVisual;
-    if (!visual || !visual.object) return;
+    if (!gs.isDragging || !visual || !visual.object) return;
+
+    const dx = event.clientX - gs.startX;
+    const dy = event.clientY - gs.startY;
+    const movedEnough = Math.sqrt(dx * dx + dy * dy) >= DRAG_DEAD_ZONE;
 
     const floorPos = getFloorPosition(event.clientX, event.clientY, gs.liftY);
-    if (floorPos) {
-      visual.object.position.x = clamp(floorPos.x, PHYSICS_ROOM_BOUNDS.minX, PHYSICS_ROOM_BOUNDS.maxX);
-      visual.object.position.z = clamp(floorPos.z, PHYSICS_ROOM_BOUNDS.minZ, PHYSICS_ROOM_BOUNDS.maxZ);
-      visual.object.position.y = gs.liftY;
+    if (floorPos && movedEnough) {
+      const isMobileViewport = window.innerWidth < 768;
+      const minX = isMobileViewport ? Math.max(PHYSICS_ROOM_BOUNDS.minX, -MOBILE_VISIBLE_X_RANGE) : PHYSICS_ROOM_BOUNDS.minX;
+      const maxX = isMobileViewport ? Math.min(PHYSICS_ROOM_BOUNDS.maxX, MOBILE_VISIBLE_X_RANGE) : PHYSICS_ROOM_BOUNDS.maxX;
+      const targetX = clamp(floorPos.x, minX, maxX);
+      const targetZ = clamp(floorPos.z, PHYSICS_ROOM_BOUNDS.minZ, PHYSICS_ROOM_BOUNDS.maxZ);
+      visual.object.position.x = THREE.MathUtils.lerp(visual.object.position.x, targetX, DRAG_LERP);
+      visual.object.position.z = THREE.MathUtils.lerp(visual.object.position.z, targetZ, DRAG_LERP);
+      visual.object.position.y = THREE.MathUtils.lerp(visual.object.position.y, gs.liftY, DRAG_LERP);
       visual.object.updateMatrixWorld(true);
     }
 
-    /* Record velocity history */
     const now = Date.now();
     gs.velocityHistory.push({ x: event.clientX, y: event.clientY, t: now });
     if (gs.velocityHistory.length > VELOCITY_HISTORY_SIZE) gs.velocityHistory.shift();
@@ -6190,7 +6484,6 @@ function setupInteraction() {
   }
 
   function onPointerUp(event) {
-    clearTimeout(STATE.longPressTimer);
     const gs = STATE.grabState;
     STATE.grabState = null;
     canvas.style.cursor = '';
@@ -6202,53 +6495,29 @@ function setupInteraction() {
 
     const visual = STATE.grabbedVisual;
     STATE.grabbedVisual = null;
-
     if (!visual.object || !visual.phys) return;
 
-    /* Calculate throw velocity from pointer history */
     let throwVX = 0, throwVZ = 0;
     if (gs.velocityHistory.length >= 2) {
       const recent = gs.velocityHistory[gs.velocityHistory.length - 1];
       const older = gs.velocityHistory[0];
       const dt = Math.max(recent.t - older.t, 1);
-      const dxScreen = recent.x - older.x;
-      const dyScreen = recent.y - older.y;
-
-      /* Convert screen velocity to world velocity (approximate) */
-      const floorA = getFloorPosition(older.x, older.y, visual.phys.restX > 0.5 ? gs.liftY : 0);
-      const floorB = getFloorPosition(recent.x, recent.y, visual.phys.restX > 0.5 ? gs.liftY : 0);
+      const floorA = getFloorPosition(older.x, older.y, gs.liftY);
+      const floorB = getFloorPosition(recent.x, recent.y, gs.liftY);
       if (floorA && floorB) {
         throwVX = ((floorB.x - floorA.x) / dt) * 1000 * PHYSICS_THROW_MULTIPLIER;
         throwVZ = ((floorB.z - floorA.z) / dt) * 1000 * PHYSICS_THROW_MULTIPLIER;
       }
     }
 
-    /* Drop object to floor/desk level */
-    const wasOnDesk = visual.phys.onDesk;
-    const deskBounds = getDeskSurfaceBounds();
-    const isOverDesk = visual.object.position.x >= deskBounds.minX - 0.5
-      && visual.object.position.x <= deskBounds.maxX + 0.5
-      && visual.object.position.z >= deskBounds.minZ - 0.5
-      && visual.object.position.z <= deskBounds.maxZ + 0.5;
-
-    if (isOverDesk && STATE.room.deskTopY) {
-      restObjectOnY(visual.object, STATE.room.deskTopY);
-      visual.phys.onDesk = true;
-    } else {
-      restObjectOnY(visual.object, 0.02);
-      visual.phys.onDesk = false;
-    }
-
-    /* Apply throw velocity */
     visual.phys.vx = clamp(throwVX, -PHYSICS_MAX_VELOCITY, PHYSICS_MAX_VELOCITY);
     visual.phys.vz = clamp(throwVZ, -PHYSICS_MAX_VELOCITY, PHYSICS_MAX_VELOCITY);
+    const horizontalSpeed = Math.sqrt(visual.phys.vx * visual.phys.vx + visual.phys.vz * visual.phys.vz);
+    visual.phys.vy = Math.min(PHYSICS_THROW_UPWARD + horizontalSpeed * 0.12, 0.24);
+    visual.phys.airborne = true;
+    visual.phys.onDesk = false;
     visual.phys.settled = false;
 
-    /* Update rest position to new dropped position */
-    visual.phys.restX = visual.object.position.x;
-    visual.phys.restZ = visual.object.position.z;
-
-    /* Persist the new position */
     const layoutKey = visual.object?.userData?.layoutCacheKey;
     if (layoutKey) {
       syncLayoutCacheFromObject(layoutKey, visual.object, visual.object.userData.layoutCacheExtra || {});
@@ -6259,9 +6528,8 @@ function setupInteraction() {
   }
 
   function onPointerCancel(event) {
-    clearTimeout(STATE.longPressTimer);
     if (STATE.grabbedVisual && STATE.grabbedVisual.object && STATE.grabbedVisual.phys) {
-      restObjectOnY(STATE.grabbedVisual.object, STATE.grabbedVisual.phys.onDesk ? (STATE.room.deskTopY || 1.28) : 0.02);
+      settleVisualAtCurrentXZ(STATE.grabbedVisual);
     }
     STATE.grabState = null;
     STATE.grabbedVisual = null;
@@ -6272,11 +6540,7 @@ function setupInteraction() {
   canvas.addEventListener('pointermove', onPointerMove, { passive: false });
   canvas.addEventListener('pointerup', onPointerUp, { passive: false });
   canvas.addEventListener('pointercancel', onPointerCancel, { passive: false });
-
-  /* Prevent context menu on long-press (mobile) */
   canvas.addEventListener('contextmenu', (e) => { if (STATE.grabState) e.preventDefault(); });
-
-  /* Prevent touch scrolling while dragging */
   canvas.addEventListener('touchmove', (e) => {
     if (STATE.grabState?.isDragging) e.preventDefault();
   }, { passive: false });
