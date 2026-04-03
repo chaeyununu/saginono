@@ -62,6 +62,12 @@ const GOOGLE_BROWSER_PROMPT_SESSION_KEY = 'mind-room-google-browser-prompt-dismi
 const FREEZE_RELOAD_THRESHOLD_MS = 3000;
 const FREEZE_RELOAD_CHECK_MS = 1000;
 const FREEZE_RELOAD_REASON_KEY = 'mind-room-freeze-reload-reason-v1';
+const FREEZE_RELOAD_COUNT_KEY = 'mind-room-freeze-reload-count-v1';
+const FREEZE_RELOAD_MAX_RAPID = 3;
+const FREEZE_RELOAD_RAPID_WINDOW_MS = 15000;
+const GLB_LOAD_TIMEOUT_MS = 8000;
+const GLB_BACKGROUND_RETRY_DELAY_MS = 5000;
+const GLB_BACKGROUND_MAX_RETRIES = 4;
 const DUMMY_MEMO_SEED_COUNT = 30;
 const DUMMY_MEMO_SEED_VERSION = 'demo-seed-v1';
 
@@ -1081,6 +1087,7 @@ const STATE = {
   idbReady: false,
   freezeWatchdogTimer: null,
   freezeReloadTriggered: false,
+  assetsLoading: false,
   lastFrameHeartbeat: performance.now(),
   loopStarted: false,
   idbDatabase: null,
@@ -2383,7 +2390,7 @@ function createFallbackTemplate(key, fallbackFactory) {
 
 function primeFallbackTemplatesForDeferredAssets() {
   getTemplateEntries().forEach(([key, , fallbackFactory]) => {
-    if (key === 'desk' || STATE.templates[key]) return;
+    if (STATE.templates[key]) return;
     STATE.templates[key] = createFallbackTemplate(key, fallbackFactory);
   });
 }
@@ -2399,48 +2406,80 @@ async function loadTemplateEntries(loader, entries) {
 }
 
 async function loadDeskAsset() {
-  const loader = new GLTFLoader();
-  const deskEntry = getTemplateEntries().filter(([key]) => key === 'desk');
-  await loadTemplateEntries(loader, deskEntry);
+  STATE.assetsLoading = true;
+  try {
+    const loader = new GLTFLoader();
+    const deskEntry = getTemplateEntries().filter(([key]) => key === 'desk');
+    await loadTemplateEntries(loader, deskEntry);
+  } catch (error) {
+    console.warn('Desk asset loading failed. Using fallback desk.', error);
+  } finally {
+    STATE.assetsLoading = false;
+  }
 }
 
 async function loadRemainingAssetsInBackground() {
   if (STATE.nonDeskAssetsReady) return;
   if (STATE.remainingAssetLoadPromise) return STATE.remainingAssetLoadPromise;
 
-  const loader = new GLTFLoader();
-  const deferredEntries = getTemplateEntries().filter(([key]) => key !== 'desk');
+  STATE.remainingAssetLoadPromise = (async () => {
+    let retries = 0;
+    while (!STATE.nonDeskAssetsReady && retries < GLB_BACKGROUND_MAX_RETRIES) {
+      STATE.assetsLoading = true;
+      try {
+        const loader = new GLTFLoader();
+        const deferredEntries = getTemplateEntries().filter(([key]) => key !== 'desk');
+        await loadTemplateEntries(loader, deferredEntries);
+        STATE.nonDeskAssetsReady = true;
+        STATE.pendingVisualRebuild = true;
+        STATE.lastVisualSignature = '';
+      } catch (error) {
+        retries++;
+        console.warn(`Deferred asset loading attempt ${retries} failed. ${retries < GLB_BACKGROUND_MAX_RETRIES ? 'Retrying...' : 'Keeping fallbacks.'}`, error);
+        if (retries < GLB_BACKGROUND_MAX_RETRIES) {
+          await new Promise((r) => setTimeout(r, GLB_BACKGROUND_RETRY_DELAY_MS));
+        }
+      } finally {
+        STATE.assetsLoading = false;
+      }
+    }
+    if (!STATE.nonDeskAssetsReady) {
+      STATE.nonDeskAssetsReady = true;
+      STATE.pendingVisualRebuild = true;
+      STATE.lastVisualSignature = '';
+    }
+  })();
 
-  STATE.remainingAssetLoadPromise = loadTemplateEntries(loader, deferredEntries)
-    .then(() => {
-      STATE.nonDeskAssetsReady = true;
-      STATE.pendingVisualRebuild = true;
-      STATE.lastVisualSignature = '';
-    })
-    .catch((error) => {
-      console.warn('Deferred asset loading failed. Keeping fallback templates.', error);
-      STATE.nonDeskAssetsReady = true;
-      STATE.pendingVisualRebuild = true;
-      STATE.lastVisualSignature = '';
-    })
-    .finally(() => {
-      STATE.remainingAssetLoadPromise = null;
-    });
+  STATE.remainingAssetLoadPromise.finally(() => {
+    STATE.remainingAssetLoadPromise = null;
+  });
 
   return STATE.remainingAssetLoadPromise;
 }
 
 async function loadAssets() {
-  const loader = new GLTFLoader();
-  await loadTemplateEntries(loader, getTemplateEntries());
-  STATE.nonDeskAssetsReady = true;
+  STATE.assetsLoading = true;
+  try {
+    const loader = new GLTFLoader();
+    await loadTemplateEntries(loader, getTemplateEntries());
+    STATE.nonDeskAssetsReady = true;
+  } catch (error) {
+    console.warn('Full asset loading failed. Using fallbacks.', error);
+    STATE.nonDeskAssetsReady = true;
+  } finally {
+    STATE.assetsLoading = false;
+  }
 }
 
 async function loadTemplate(loader, key, filename, fallbackFactory) {
   let root;
 
   try {
-    const gltf = await loader.loadAsync(`./assets/${filename}`);
+    const loadPromise = loader.loadAsync(`./assets/${filename}`);
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Timeout loading ${filename}`)), GLB_LOAD_TIMEOUT_MS)
+    );
+    const gltf = await Promise.race([loadPromise, timeoutPromise]);
     root = gltf.scene;
     root.animations = gltf.animations || [];
   } catch (error) {
@@ -5503,6 +5542,21 @@ function hideMemoHover() {
 
 function requestSafeAppReload(reason = 'unknown') {
   if (STATE.freezeReloadTriggered) return;
+
+  /* Prevent infinite reload loops: track recent reload count */
+  try {
+    const raw = sessionStorage.getItem(FREEZE_RELOAD_COUNT_KEY);
+    const history = raw ? JSON.parse(raw) : [];
+    const now = Date.now();
+    const recent = history.filter((t) => now - t < FREEZE_RELOAD_RAPID_WINDOW_MS);
+    if (recent.length >= FREEZE_RELOAD_MAX_RAPID) {
+      console.warn('Suppressed reload – too many rapid reloads. Continuing with fallback.');
+      return;
+    }
+    recent.push(now);
+    sessionStorage.setItem(FREEZE_RELOAD_COUNT_KEY, JSON.stringify(recent));
+  } catch (_) {}
+
   STATE.freezeReloadTriggered = true;
 
   try {
@@ -5529,6 +5583,8 @@ function setupFreezeReloadGuards() {
   STATE.freezeWatchdogTimer = window.setInterval(() => {
     if (STATE.freezeReloadTriggered || !STATE.loopStarted) return;
     if (document.visibilityState !== 'visible') return;
+    /* Don't trigger reload while GLB assets are still loading */
+    if (STATE.assetsLoading) return;
 
     try {
       const gl = STATE.renderer?.getContext?.();
@@ -6089,17 +6145,26 @@ function getScreenOrientationAngle() {
   return 0;
 }
 
+function getEffectiveOrientationAngle() {
+  const reportedAngle = getScreenOrientationAngle();
+  /* Some iPads report angle=0 even when in landscape. Detect and correct. */
+  if (reportedAngle === 0 && isTabletLikeTiltDevice() && window.innerWidth > window.innerHeight) {
+    /* Landscape with home-button right is the most common default on iPad. */
+    return 90;
+  }
+  return reportedAngle;
+}
+
 function updateTiltSmoothing() {
   if (!STATE.tilt.active) return;
 
   const rawBeta = STATE.tilt.rawBeta;
   const rawGamma = STATE.tilt.rawGamma;
   const isTabletLike = isTabletLikeTiltDevice();
-  const angle = getScreenOrientationAngle();
-  const isLandscapeLike = Math.abs(angle) === 90 || (isTabletLike && window.innerWidth > window.innerHeight);
 
-  let axisX = rawGamma;
-  let axisZ = rawBeta - PHYSICS_PHONE_BETA_NEUTRAL;
+  const neutralBeta = isTabletLike ? PHYSICS_TABLET_BETA_NEUTRAL : PHYSICS_PHONE_BETA_NEUTRAL;
+  const shiftedBeta = rawBeta - neutralBeta;
+
   let divisorX = PHYSICS_PHONE_TILT_DIVISOR_X;
   let divisorZ = PHYSICS_PHONE_TILT_DIVISOR_Z;
   let gain = 1;
@@ -6108,21 +6173,18 @@ function updateTiltSmoothing() {
     divisorX = PHYSICS_TABLET_TILT_DIVISOR_X;
     divisorZ = PHYSICS_TABLET_TILT_DIVISOR_Z;
     gain = PHYSICS_TABLET_TILT_GAIN;
-
-    if (isLandscapeLike) {
-      const shiftedBeta = rawBeta - PHYSICS_TABLET_BETA_NEUTRAL;
-      if (angle === -90 || angle === 270) {
-        axisX = -shiftedBeta;
-        axisZ = rawGamma;
-      } else {
-        axisX = shiftedBeta;
-        axisZ = -rawGamma;
-      }
-    } else {
-      axisX = rawGamma;
-      axisZ = rawBeta - PHYSICS_TABLET_BETA_NEUTRAL;
-    }
   }
+
+  /* Rotate raw device tilt by the screen orientation angle so that
+     screen-left always maps to world -X and screen-down to world +Z,
+     regardless of portrait / landscape / inverted orientation. */
+  const angle = getEffectiveOrientationAngle();
+  const rad = (angle * Math.PI) / 180;
+  const cosA = Math.cos(rad);
+  const sinA = Math.sin(rad);
+
+  const axisX = rawGamma * cosA + shiftedBeta * sinA;
+  const axisZ = -rawGamma * sinA + shiftedBeta * cosA;
 
   const targetX = clamp(axisX / divisorX, -1, 1) * PHYSICS_TILT_FORCE * gain;
   const targetZ = clamp(axisZ / divisorZ, -1, 1) * PHYSICS_TILT_FORCE * gain;
