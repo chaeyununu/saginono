@@ -6311,11 +6311,17 @@ function updatePhysics(delta) {
       return;
     }
 
+    if (hasForce) {
+      p.vx += forceX * (1 - p.friction) * 0.8;
+      p.vz += forceZ * (1 - p.friction) * 0.8;
+      p.settled = false;
+    }
+
     p.vx *= PHYSICS_FLOOR_ROLL_FRICTION;
     p.vz *= PHYSICS_FLOOR_ROLL_FRICTION;
 
     const floorSpeed = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
-    if (floorSpeed < PHYSICS_REST_THRESHOLD) {
+    if (floorSpeed < PHYSICS_REST_THRESHOLD && !hasForce) {
       p.vx = 0;
       p.vz = 0;
       p.settled = true;
