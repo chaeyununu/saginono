@@ -34,7 +34,7 @@ const PHYSICS_DESK_EDGE_FALL_SPEED = -0.035;
 const PHYSICS_FLOOR_ROLL_FRICTION = 0.965;
 const DESK_SURFACE_SIDE_INSET = 0.08;
 const DESK_SURFACE_BACK_INSET = 0.08;
-const DESK_SURFACE_FRONT_INSET = 0.5;
+const DESK_SURFACE_FRONT_INSET = 0.72;
 const DESK_OBSTACLE_EPSILON = 0.02;
 const VELOCITY_HISTORY_SIZE = 6;
 const IDB_DB_NAME = 'mind-room-db';
@@ -6340,14 +6340,6 @@ function updatePhysics(delta) {
     if (visual.object.position.x > b.maxX) { visual.object.position.x = b.maxX; p.vx *= -PHYSICS_BOUNCE_FACTOR; }
     if (visual.object.position.z < b.minZ) { visual.object.position.z = b.minZ; p.vz *= -PHYSICS_BOUNCE_FACTOR; }
     if (visual.object.position.z > b.maxZ) { visual.object.position.z = b.maxZ; p.vz *= -PHYSICS_BOUNCE_FACTOR; }
-
-    const obstacleHit = resolveDeskObstacleCollision(prevX, prevZ, visual.object.position.x, visual.object.position.z);
-    if (obstacleHit) {
-      visual.object.position.x = obstacleHit.x;
-      visual.object.position.z = obstacleHit.z;
-      if (obstacleHit.axisX) p.vx *= -PHYSICS_BOUNCE_FACTOR;
-      if (obstacleHit.axisZ) p.vz *= -PHYSICS_BOUNCE_FACTOR;
-    }
 
     restObjectOnY(visual.object, PHYSICS_FLOOR_Y);
     p.onDesk = false;
