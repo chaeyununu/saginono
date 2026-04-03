@@ -48,6 +48,8 @@ const IDB_DB_NAME = 'mind-room-db';
 const IDB_STORE_NAME = 'app-data';
 const IDB_DB_VERSION = 1;
 const GOOGLE_BROWSER_PROMPT_SESSION_KEY = 'mind-room-google-browser-prompt-dismissed-v1';
+const FREEZE_RELOAD_THRESHOLD_MS = 7000;
+const FREEZE_RELOAD_CHECK_MS = 2000;
 const DUMMY_MEMO_SEED_COUNT = 30;
 const DUMMY_MEMO_SEED_VERSION = 'demo-seed-v1';
 
@@ -1060,6 +1062,7 @@ const STATE = {
   layoutCache: Object.create(null),
   /* physics & interaction */
   tilt: { x: 0, z: 0, rawBeta: 0, rawGamma: 0, active: false },
+  frameWatch: { lastFrameAt: 0, watchdogTimer: null, reloading: false },
   grabbedVisual: null,
   grabState: null, /* { startTime, startX, startY, pointerId, isDragging, velocityHistory, lastX, lastY, lastTime, liftY } */
   longPressTimer: null,
@@ -1662,6 +1665,60 @@ function hideBrowserRecommendationPrompt() {
 }
 
 
+function markFrameAlive(now = performance.now()) {
+  STATE.frameWatch.lastFrameAt = now;
+}
+
+function reloadPageSafely(reason = 'unknown') {
+  if (STATE.frameWatch.reloading) return;
+  STATE.frameWatch.reloading = true;
+
+
+  window.setTimeout(() => {
+    try {
+      window.location.reload();
+    } catch (_) {
+      window.location.href = window.location.href;
+    }
+  }, 0);
+}
+
+function setupAutoReloadGuards() {
+  if (STATE.frameWatch.watchdogTimer) return;
+
+  markFrameAlive();
+
+  const refreshHeartbeat = () => {
+    if (document.visibilityState === 'visible') markFrameAlive();
+  };
+
+  document.addEventListener('visibilitychange', refreshHeartbeat);
+  window.addEventListener('pageshow', refreshHeartbeat);
+  window.addEventListener('focus', refreshHeartbeat);
+
+  STATE.frameWatch.watchdogTimer = window.setInterval(() => {
+    if (STATE.frameWatch.reloading) return;
+    if (document.visibilityState !== 'visible') {
+      markFrameAlive();
+      return;
+    }
+
+    const stalledFor = performance.now() - STATE.frameWatch.lastFrameAt;
+    if (stalledFor >= FREEZE_RELOAD_THRESHOLD_MS) {
+      reloadPageSafely('freeze-watchdog');
+    }
+  }, FREEZE_RELOAD_CHECK_MS);
+}
+
+function attachWebGLContextLossHandler(canvas) {
+  if (!canvas || canvas.dataset.autoReloadGuardAttached === '1') return;
+  canvas.dataset.autoReloadGuardAttached = '1';
+  canvas.addEventListener('webglcontextlost', (event) => {
+    event.preventDefault();
+    reloadPageSafely('webgl-context-lost');
+  }, { passive: false });
+}
+
 init();
 
 async function init() {
@@ -2245,6 +2302,7 @@ function setupScene() {
   STATE.renderer.toneMappingExposure = 1.08;
   UI.sceneRoot.innerHTML = '';
   UI.sceneRoot.appendChild(STATE.renderer.domElement);
+  attachWebGLContextLossHandler(STATE.renderer.domElement);
 
   const hemi = new THREE.HemisphereLight(0xfffbf4, 0xe9dfd3, 1.7);
   STATE.scene.add(hemi);
@@ -5483,7 +5541,11 @@ function hideMemoHover() {
 }
 
 function startLoop() {
+  setupAutoReloadGuards();
+  markFrameAlive();
+
   const frame = () => {
+    markFrameAlive();
     const delta = Math.min(STATE.clock.getDelta(), 0.033);
     const now = Date.now();
 
