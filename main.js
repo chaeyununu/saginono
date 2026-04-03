@@ -20,8 +20,8 @@ const PHYSICS_THROW_MULTIPLIER = 0.032;
 const PHYSICS_THROW_FRICTION = 0.92;
 const PHYSICS_BOUNCE_FACTOR = 0.45;
 const PHYSICS_ROOM_BOUNDS = { minX: -8.5, maxX: 8.5, minZ: -5.8, maxZ: 5.4 };
-const PHYSICS_SEPARATION_RADIUS = 1.75;
-const PHYSICS_SEPARATION_FORCE = 0.03;
+const PHYSICS_SEPARATION_RADIUS = 1.2;
+const PHYSICS_SEPARATION_FORCE = 0.012;
 const LONG_PRESS_MS = 0;
 const DRAG_DEAD_ZONE = 3;
 const DRAG_LERP = 0.55;
@@ -34,7 +34,7 @@ const PHYSICS_DESK_EDGE_FALL_SPEED = -0.035;
 const PHYSICS_FLOOR_ROLL_FRICTION = 0.965;
 const DESK_SURFACE_SIDE_INSET = 0.08;
 const DESK_SURFACE_BACK_INSET = 0.08;
-const DESK_SURFACE_FRONT_INSET = 0.72;
+const DESK_SURFACE_FRONT_INSET = 0.26;
 const DESK_OBSTACLE_EPSILON = 0.02;
 const VELOCITY_HISTORY_SIZE = 6;
 const IDB_DB_NAME = 'mind-room-db';
@@ -1646,12 +1646,18 @@ function shouldShowBrowserRecommendationPrompt() {
 function showBrowserRecommendationPrompt() {
   if (!shouldShowBrowserRecommendationPrompt()) return;
   UI.browserRecommendationModal.classList.add('visible');
+  if (UI.permissionModal) {
+    UI.permissionModal.classList.remove('visible');
+  }
 }
 
 function hideBrowserRecommendationPrompt() {
   if (!UI.browserRecommendationModal) return;
   UI.browserRecommendationModal.classList.remove('visible');
   markBrowserRecommendationDismissed();
+  if (UI.permissionModal && !STATE.hasMicPermission) {
+    UI.permissionModal.classList.add('visible');
+  }
 }
 
 
@@ -6311,17 +6317,11 @@ function updatePhysics(delta) {
       return;
     }
 
-    if (hasForce) {
-      p.vx += forceX * (1 - p.friction) * 0.8;
-      p.vz += forceZ * (1 - p.friction) * 0.8;
-      p.settled = false;
-    }
-
     p.vx *= PHYSICS_FLOOR_ROLL_FRICTION;
     p.vz *= PHYSICS_FLOOR_ROLL_FRICTION;
 
     const floorSpeed = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
-    if (floorSpeed < PHYSICS_REST_THRESHOLD && !hasForce) {
+    if (floorSpeed < PHYSICS_REST_THRESHOLD) {
       p.vx = 0;
       p.vz = 0;
       p.settled = true;
@@ -6340,6 +6340,14 @@ function updatePhysics(delta) {
     if (visual.object.position.x > b.maxX) { visual.object.position.x = b.maxX; p.vx *= -PHYSICS_BOUNCE_FACTOR; }
     if (visual.object.position.z < b.minZ) { visual.object.position.z = b.minZ; p.vz *= -PHYSICS_BOUNCE_FACTOR; }
     if (visual.object.position.z > b.maxZ) { visual.object.position.z = b.maxZ; p.vz *= -PHYSICS_BOUNCE_FACTOR; }
+
+    const obstacleHit = resolveDeskObstacleCollision(prevX, prevZ, visual.object.position.x, visual.object.position.z);
+    if (obstacleHit) {
+      visual.object.position.x = obstacleHit.x;
+      visual.object.position.z = obstacleHit.z;
+      if (obstacleHit.axisX) p.vx *= -PHYSICS_BOUNCE_FACTOR;
+      if (obstacleHit.axisZ) p.vz *= -PHYSICS_BOUNCE_FACTOR;
+    }
 
     restObjectOnY(visual.object, PHYSICS_FLOOR_Y);
     p.onDesk = false;
