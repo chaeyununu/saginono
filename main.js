@@ -7,9 +7,9 @@ const STORAGE_PAYLOAD_VERSION = 4;
 const NON_DESK_SCALE_MULTIPLIER = 2;
 
 /* ═══ Physics & Interaction Constants ═══ */
-const PHYSICS_FRICTION_RECENT = 0.0009;
-const PHYSICS_FRICTION_OLD = 0.9985;
-const PHYSICS_FRICTION_MID = 0.88;
+const PHYSICS_FRICTION_RECENT = 0.992;
+const PHYSICS_FRICTION_OLD = 0.42;
+const PHYSICS_FRICTION_MID = 0.78;
 const PHYSICS_AGE_RECENT_HOURS = 0.01;
 const PHYSICS_AGE_OLD_DAYS = 10;
 const PHYSICS_TILT_FORCE = 0.044;
@@ -2170,11 +2170,18 @@ function createMemoFromTranscript(transcript) {
 
   snapshotLiveVisualTransformsToLayoutCache();
   STATE.memos.unshift(memo);
-  const handledIncrementally = createAndAttachVisualForMemo(memo, memo.id);
-  persistStorage();
-  if (!handledIncrementally) {
-    rebuildVisuals(memo.id);
+
+  if (STATE.nonDeskAssetsReady) {
+    const handledIncrementally = createAndAttachVisualForMemo(memo, memo.id);
+    persistStorage();
+    if (!handledIncrementally) {
+      rebuildVisuals(memo.id);
+    }
+  } else {
+    persistStorage();
+    void loadRemainingAssetsInBackground();
   }
+
   renderHistory();
   resetDeleteStreak();
   maybeTriggerCreationEasters(memo);
@@ -2389,13 +2396,7 @@ function getTemplateEntryByKey(key) {
 }
 
 function ensureDeferredFallbackTemplate(key) {
-  if (STATE.templates[key]) return STATE.templates[key];
-  const entry = getTemplateEntryByKey(key);
-  if (!entry) return null;
-  const [, , fallbackFactory] = entry;
-  const template = createFallbackTemplate(key, fallbackFactory);
-  STATE.templates[key] = template;
-  return template;
+  return STATE.templates[key] || null;
 }
 
 function finalizeTemplateRoot(root, key) {
@@ -2444,15 +2445,19 @@ async function loadRemainingAssetsInBackground() {
   const loader = new GLTFLoader();
   const deferredEntries = getTemplateEntries().filter(([key]) => key !== 'desk');
 
-  STATE.remainingAssetLoadPromise = loadTemplateEntriesSequentially(loader, deferredEntries)
-    .then(() => {
-      STATE.nonDeskAssetsReady = true;
-      scheduleDeferredVisualReveal();
-    })
+  STATE.remainingAssetLoadPromise = (async () => {
+    for (const [key, filename, fallback] of deferredEntries) {
+      if (STATE.templates[key]) continue;
+      STATE.templates[key] = await loadTemplate(loader, key, filename, fallback, { allowFallback: false });
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    }
+
+    STATE.nonDeskAssetsReady = true;
+    scheduleDeferredVisualReveal();
+  })()
     .catch((error) => {
-      console.warn('Deferred asset loading failed. Keeping fallback templates.', error);
-      STATE.nonDeskAssetsReady = true;
-      scheduleDeferredVisualReveal();
+      console.warn('Deferred asset loading failed. Non-desk visuals will stay hidden until every GLB is loaded.', error);
+      throw error;
     })
     .finally(() => {
       STATE.remainingAssetLoadPromise = null;
@@ -2467,7 +2472,8 @@ async function loadAssets() {
   STATE.nonDeskAssetsReady = true;
 }
 
-async function loadTemplate(loader, key, filename, fallbackFactory) {
+async function loadTemplate(loader, key, filename, fallbackFactory, options = {}) {
+  const { allowFallback = true } = options;
   let root;
 
   try {
@@ -2475,6 +2481,9 @@ async function loadTemplate(loader, key, filename, fallbackFactory) {
     root = gltf.scene;
     root.animations = gltf.animations || [];
   } catch (error) {
+    if (!allowFallback) {
+      throw error;
+    }
     console.warn(`Failed to load ${filename}. Using fallback.`, error);
     root = fallbackFactory();
     root.animations = [];
@@ -3066,7 +3075,7 @@ function buildStaticDecor() {
 }
 
 function createAssetInstance(key) {
-  const template = STATE.templates[key] || ensureDeferredFallbackTemplate(key);
+  const template = STATE.templates[key];
   if (!template) {
     throw new Error(`Missing asset template: ${key}`);
   }
@@ -3579,6 +3588,12 @@ function buildActiveLayoutKeys({ records, clutterFresh, clutterOld, routines, sn
 function rebuildVisuals(animateMemoId = null) {
   snapshotLiveVisualTransformsToLayoutCache();
   disposeVisuals();
+
+  if (shouldUseDeskFirstLoading() && !STATE.nonDeskAssetsReady) {
+    updateCounts();
+    STATE.lastVisualSignature = buildVisualSignature();
+    return;
+  }
 
   const activeMemos = STATE.memos.filter((memo) => !memo.clearedAt);
   const now = Date.now();
