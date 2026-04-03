@@ -7,13 +7,18 @@ const STORAGE_PAYLOAD_VERSION = 4;
 const NON_DESK_SCALE_MULTIPLIER = 2;
 
 /* ═══ Physics & Interaction Constants ═══ */
-const PHYSICS_FRICTION_RECENT = 0.96;
-const PHYSICS_FRICTION_OLD = 0.78;
-const PHYSICS_FRICTION_MID = 0.88;
+const PHYSICS_FRICTION_RECENT = 0.988;
+const PHYSICS_FRICTION_OLD = 0.76;
+const PHYSICS_FRICTION_MID = 0.93;
 const PHYSICS_AGE_RECENT_HOURS = 72;
-const PHYSICS_AGE_OLD_DAYS = 3;
+const PHYSICS_AGE_OLD_DAYS = 7;
 const PHYSICS_TILT_FORCE = 0.044;
 const PHYSICS_TILT_SMOOTHING = 0.22;
+const PHYSICS_TILT_MULTIPLIER_RECENT = 0.08;
+const PHYSICS_TILT_MULTIPLIER_MID = 1.0;
+const PHYSICS_TILT_MULTIPLIER_OLD = 2.35;
+const PHYSICS_TILT_PRIORITY_ASSET_MULTIPLIER = 1.55;
+const PHYSICS_TILT_PRIORITY_ASSET_KEYS = new Set(['burn', 'jar', 'paperPile', 'clothesScattered']);
 const PHYSICS_REST_THRESHOLD = 0.0008;
 const PHYSICS_MAX_VELOCITY = 0.55;
 const PHYSICS_THROW_MULTIPLIER = 0.032;
@@ -6068,22 +6073,40 @@ function updateTiltSmoothing() {
 }
 
 /* ═══ Physics System ═══ */
-function isRecentPhysicsLockedMemo(memo) {
-  if (!memo?.createdAt) return false;
+function getPhysicsAgeStage(memo) {
+  if (!memo?.createdAt) return 'mid';
   const ageMs = Date.now() - new Date(memo.createdAt).getTime();
   const ageHours = ageMs / (1000 * 60 * 60);
-  return ageHours < PHYSICS_AGE_RECENT_HOURS;
+  if (ageHours < PHYSICS_AGE_RECENT_HOURS) return 'recent';
+  const ageDays = ageHours / 24;
+  if (ageDays >= PHYSICS_AGE_OLD_DAYS) return 'old';
+  return 'mid';
+}
+
+function isRecentPhysicsLockedMemo(memo) {
+  return getPhysicsAgeStage(memo) === 'recent' && false;
 }
 
 function getPhysicsFriction(memo) {
-  if (!memo) return PHYSICS_FRICTION_MID;
-  const ageMs = Date.now() - new Date(memo.createdAt).getTime();
-  const ageHours = ageMs / (1000 * 60 * 60);
-  if (ageHours < PHYSICS_AGE_RECENT_HOURS) return PHYSICS_FRICTION_RECENT;
-  const ageDays = ageHours / 24;
-  if (ageDays >= PHYSICS_AGE_OLD_DAYS) return PHYSICS_FRICTION_OLD;
-  const t = (ageDays - (PHYSICS_AGE_RECENT_HOURS / 24)) / (PHYSICS_AGE_OLD_DAYS - (PHYSICS_AGE_RECENT_HOURS / 24));
-  return THREE.MathUtils.lerp(PHYSICS_FRICTION_RECENT, PHYSICS_FRICTION_OLD, clamp(t, 0, 1));
+  const ageStage = getPhysicsAgeStage(memo);
+  if (ageStage === 'recent') return PHYSICS_FRICTION_RECENT;
+  if (ageStage === 'old') return PHYSICS_FRICTION_OLD;
+  return PHYSICS_FRICTION_MID;
+}
+
+function getPhysicsTiltResponseMultiplier(memo, visual) {
+  const ageStage = getPhysicsAgeStage(memo);
+  let multiplier = PHYSICS_TILT_MULTIPLIER_MID;
+
+  if (ageStage === 'recent') multiplier = PHYSICS_TILT_MULTIPLIER_RECENT;
+  else if (ageStage === 'old') multiplier = PHYSICS_TILT_MULTIPLIER_OLD;
+
+  const assetKey = visual?.object?.userData?.assetKey || '';
+  if (PHYSICS_TILT_PRIORITY_ASSET_KEYS.has(assetKey)) {
+    multiplier *= PHYSICS_TILT_PRIORITY_ASSET_MULTIPLIER;
+  }
+
+  return multiplier;
 }
 
 function getDeskCollisionBounds() {
@@ -6207,7 +6230,6 @@ function updatePhysics(delta) {
     if (visual === STATE.grabbedVisual) return;
     if (visual.dropIntro) return;
     const memo = visual.memoIds?.length ? memoMap.get(visual.memoIds[0]) || null : null;
-    if (isRecentPhysicsLockedMemo(memo)) return;
     if (visual.phys.airborne) return;
     if (!visual.phys.onDesk) return;
     activeDeskVisuals.push(visual);
@@ -6245,15 +6267,8 @@ function updatePhysics(delta) {
 
     const p = visual.phys;
     const memo = visual.memoIds?.length ? memoMap.get(visual.memoIds[0]) || null : null;
+    const tiltResponseMultiplier = getPhysicsTiltResponseMultiplier(memo, visual);
     p.friction = getPhysicsFriction(memo);
-
-    if (isRecentPhysicsLockedMemo(memo) && !p.airborne) {
-      p.vx = 0;
-      p.vy = 0;
-      p.vz = 0;
-      settleVisualAtCurrentXZ(visual);
-      return;
-    }
 
     if (p.airborne) {
       const prevX = visual.object.position.x;
@@ -6318,8 +6333,8 @@ function updatePhysics(delta) {
 
     if (p.onDesk) {
       if (hasForce) {
-        p.vx += forceX * (1 - p.friction) * 0.8;
-        p.vz += forceZ * (1 - p.friction) * 0.8;
+        p.vx += forceX * tiltResponseMultiplier * (1 - p.friction) * 0.8;
+        p.vz += forceZ * tiltResponseMultiplier * (1 - p.friction) * 0.8;
         p.settled = false;
       }
 
@@ -6368,8 +6383,8 @@ function updatePhysics(delta) {
     }
 
     if (hasForce) {
-      p.vx += forceX * (1 - p.friction) * 0.8;
-      p.vz += forceZ * (1 - p.friction) * 0.8;
+      p.vx += forceX * tiltResponseMultiplier * (1 - p.friction) * 0.8;
+      p.vz += forceZ * tiltResponseMultiplier * (1 - p.friction) * 0.8;
       p.settled = false;
     }
 
