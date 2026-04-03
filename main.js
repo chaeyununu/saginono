@@ -7,28 +7,21 @@ const STORAGE_PAYLOAD_VERSION = 4;
 const NON_DESK_SCALE_MULTIPLIER = 2;
 
 /* ═══ Physics & Interaction Constants ═══ */
-const PHYSICS_FRICTION_RECENT = 0.988;
-const PHYSICS_FRICTION_OLD = 0.76;
-const PHYSICS_FRICTION_MID = 0.93;
+const PHYSICS_FRICTION_RECENT = 0.96;
+const PHYSICS_FRICTION_OLD = 0.78;
+const PHYSICS_FRICTION_MID = 0.88;
 const PHYSICS_AGE_RECENT_HOURS = 72;
-const PHYSICS_AGE_OLD_DAYS = 7;
+const PHYSICS_AGE_OLD_DAYS = 3;
 const PHYSICS_TILT_FORCE = 0.044;
 const PHYSICS_TILT_SMOOTHING = 0.22;
-const PHYSICS_TILT_MULTIPLIER_RECENT = 0.08;
-const PHYSICS_TILT_MULTIPLIER_MID = 1.0;
-const PHYSICS_TILT_MULTIPLIER_OLD = 2.35;
-const PHYSICS_TILT_PRIORITY_ASSET_MULTIPLIER = 1.55;
-const PHYSICS_TILT_PRIORITY_ASSET_KEYS = new Set(['burn', 'jar', 'paperPile', 'clothesScattered']);
 const PHYSICS_REST_THRESHOLD = 0.0008;
 const PHYSICS_MAX_VELOCITY = 0.55;
 const PHYSICS_THROW_MULTIPLIER = 0.032;
 const PHYSICS_THROW_FRICTION = 0.92;
 const PHYSICS_BOUNCE_FACTOR = 0.45;
 const PHYSICS_ROOM_BOUNDS = { minX: -8.5, maxX: 8.5, minZ: -5.8, maxZ: 5.4 };
-const PHYSICS_SEPARATION_RADIUS = 1.85;
-const PHYSICS_SEPARATION_FORCE = 0.036;
-const PHYSICS_FLOOR_SEPARATION_RADIUS = 1.42;
-const PHYSICS_FLOOR_SEPARATION_FORCE = 0.022;
+const PHYSICS_SEPARATION_RADIUS = 1.75;
+const PHYSICS_SEPARATION_FORCE = 0.03;
 const LONG_PRESS_MS = 0;
 const DRAG_DEAD_ZONE = 3;
 const DRAG_LERP = 0.55;
@@ -39,17 +32,6 @@ const PHYSICS_VERTICAL_BOUNCE = 0.2;
 const PHYSICS_THROW_UPWARD = 0.14;
 const PHYSICS_DESK_EDGE_FALL_SPEED = -0.035;
 const PHYSICS_FLOOR_ROLL_FRICTION = 0.965;
-const PHYSICS_FLOOR_ROLL_FRICTION_RECENT = 0.94;
-const PHYSICS_FLOOR_ROLL_FRICTION_MID = 0.915;
-const PHYSICS_FLOOR_ROLL_FRICTION_OLD = 0.885;
-const PHYSICS_FLOOR_ROLL_PRIORITY_EXTRA = 0.022;
-const PHYSICS_TABLET_TILT_GAIN = 1.18;
-const PHYSICS_TABLET_TILT_DIVISOR_X = 23;
-const PHYSICS_TABLET_TILT_DIVISOR_Z = 21;
-const PHYSICS_PHONE_TILT_DIVISOR_X = 30;
-const PHYSICS_PHONE_TILT_DIVISOR_Z = 30;
-const PHYSICS_PHONE_BETA_NEUTRAL = 45;
-const PHYSICS_TABLET_BETA_NEUTRAL = 28;
 const DESK_SURFACE_SIDE_INSET = 0.08;
 const DESK_SURFACE_BACK_INSET = 0.08;
 const DESK_SURFACE_FRONT_INSET = 0.72;
@@ -59,20 +41,6 @@ const IDB_DB_NAME = 'mind-room-db';
 const IDB_STORE_NAME = 'app-data';
 const IDB_DB_VERSION = 1;
 const GOOGLE_BROWSER_PROMPT_SESSION_KEY = 'mind-room-google-browser-prompt-dismissed-v1';
-const FREEZE_RELOAD_THRESHOLD_MS = 12000;
-const FREEZE_RELOAD_CHECK_MS = 1500;
-const FREEZE_RELOAD_STARTUP_GRACE_MS = 20000;
-const FREEZE_RELOAD_STALE_STRIKES_REQUIRED = 3;
-const FREEZE_RELOAD_REASON_KEY = 'mind-room-freeze-reload-reason-v1';
-const FREEZE_RELOAD_COUNT_KEY = 'mind-room-freeze-reload-count-v1';
-const FREEZE_RELOAD_MAX_RAPID = 3;
-const FREEZE_RELOAD_RAPID_WINDOW_MS = 15000;
-const GLB_LOAD_TIMEOUT_MS = 8000;
-const GLB_BACKGROUND_RETRY_DELAY_MS = 5000;
-const GLB_BACKGROUND_MAX_RETRIES = 4;
-const GLB_BACKGROUND_BATCH_SIZE_DEFAULT = 3;
-const GLB_BACKGROUND_BATCH_SIZE_TABLET_SAFARI = 2;
-const GLB_BACKGROUND_BATCH_DELAY_MS = 90;
 const DUMMY_MEMO_SEED_COUNT = 30;
 const DUMMY_MEMO_SEED_VERSION = 'demo-seed-v1';
 
@@ -1090,13 +1058,6 @@ const STATE = {
   longPressTimer: null,
   physicsEnabled: true,
   idbReady: false,
-  freezeWatchdogTimer: null,
-  freezeReloadTriggered: false,
-  assetsLoading: false,
-  lastFrameHeartbeat: performance.now(),
-  loopStarted: false,
-  loopStartedAt: 0,
-  freezeStaleStrikeCount: 0,
   idbDatabase: null,
   easter: {
     overlayRoot: null,
@@ -2277,7 +2238,6 @@ function setupScene() {
   STATE.renderer.toneMappingExposure = 1.08;
   UI.sceneRoot.innerHTML = '';
   UI.sceneRoot.appendChild(STATE.renderer.domElement);
-  setupFreezeReloadGuards();
 
   const hemi = new THREE.HemisphereLight(0xfffbf4, 0xe9dfd3, 1.7);
   STATE.scene.add(hemi);
@@ -2395,131 +2355,66 @@ function createFallbackTemplate(key, fallbackFactory) {
   return finalizeTemplateRoot(root, key);
 }
 
-function isTabletSafariAssetLoadTarget() {
-  const ua = navigator.userAgent || '';
-  const isSafari = /Safari/i.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS|GSA|DuckDuckGo|YaBrowser/i.test(ua);
-  return isSafari && isTabletLikeTiltDevice();
-}
-
-function getDeferredAssetBatchSize() {
-  return isTabletSafariAssetLoadTarget()
-    ? GLB_BACKGROUND_BATCH_SIZE_TABLET_SAFARI
-    : GLB_BACKGROUND_BATCH_SIZE_DEFAULT;
-}
-
-function waitForDeferredAssetBatchGap() {
-  return new Promise((resolve) => {
-    requestAnimationFrame(() => {
-      setTimeout(resolve, GLB_BACKGROUND_BATCH_DELAY_MS);
-    });
-  });
-}
-
 function primeFallbackTemplatesForDeferredAssets() {
   getTemplateEntries().forEach(([key, , fallbackFactory]) => {
-    if (STATE.templates[key]) return;
+    if (key === 'desk' || STATE.templates[key]) return;
     STATE.templates[key] = createFallbackTemplate(key, fallbackFactory);
   });
 }
 
-async function loadTemplateEntries(loader, entries, options = {}) {
-  const batchSize = Math.max(1, Number(options.batchSize) || entries.length || 1);
-  const yieldBetweenBatches = Boolean(options.yieldBetweenBatches);
+async function loadTemplateEntries(loader, entries) {
+  const results = await Promise.all(
+    entries.map(([key, filename, fallback]) => loadTemplate(loader, key, filename, fallback))
+  );
 
-  for (let start = 0; start < entries.length; start += batchSize) {
-    const batchEntries = entries.slice(start, start + batchSize);
-    const results = await Promise.all(
-      batchEntries.map(([key, filename, fallback]) => loadTemplate(loader, key, filename, fallback))
-    );
-
-    batchEntries.forEach(([key], index) => {
-      STATE.templates[key] = results[index];
-    });
-
-    if (yieldBetweenBatches && start + batchSize < entries.length) {
-      await waitForDeferredAssetBatchGap();
-    }
-  }
+  entries.forEach(([key], index) => {
+    STATE.templates[key] = results[index];
+  });
 }
 
 async function loadDeskAsset() {
-  STATE.assetsLoading = true;
-  try {
-    const loader = new GLTFLoader();
-    const deskEntry = getTemplateEntries().filter(([key]) => key === 'desk');
-    await loadTemplateEntries(loader, deskEntry);
-  } catch (error) {
-    console.warn('Desk asset loading failed. Using fallback desk.', error);
-  } finally {
-    STATE.assetsLoading = false;
-  }
+  const loader = new GLTFLoader();
+  const deskEntry = getTemplateEntries().filter(([key]) => key === 'desk');
+  await loadTemplateEntries(loader, deskEntry);
 }
 
 async function loadRemainingAssetsInBackground() {
   if (STATE.nonDeskAssetsReady) return;
   if (STATE.remainingAssetLoadPromise) return STATE.remainingAssetLoadPromise;
 
-  STATE.remainingAssetLoadPromise = (async () => {
-    let retries = 0;
-    while (!STATE.nonDeskAssetsReady && retries < GLB_BACKGROUND_MAX_RETRIES) {
-      STATE.assetsLoading = true;
-      try {
-        const loader = new GLTFLoader();
-        const deferredEntries = getTemplateEntries().filter(([key]) => key !== 'desk');
-        await loadTemplateEntries(loader, deferredEntries, {
-          batchSize: getDeferredAssetBatchSize(),
-          yieldBetweenBatches: true,
-        });
-        STATE.nonDeskAssetsReady = true;
-        STATE.pendingVisualRebuild = true;
-        STATE.lastVisualSignature = '';
-      } catch (error) {
-        retries++;
-        console.warn(`Deferred asset loading attempt ${retries} failed. ${retries < GLB_BACKGROUND_MAX_RETRIES ? 'Retrying...' : 'Keeping fallbacks.'}`, error);
-        if (retries < GLB_BACKGROUND_MAX_RETRIES) {
-          await new Promise((r) => setTimeout(r, GLB_BACKGROUND_RETRY_DELAY_MS));
-        }
-      } finally {
-        STATE.assetsLoading = false;
-      }
-    }
-    if (!STATE.nonDeskAssetsReady) {
+  const loader = new GLTFLoader();
+  const deferredEntries = getTemplateEntries().filter(([key]) => key !== 'desk');
+
+  STATE.remainingAssetLoadPromise = loadTemplateEntries(loader, deferredEntries)
+    .then(() => {
       STATE.nonDeskAssetsReady = true;
       STATE.pendingVisualRebuild = true;
       STATE.lastVisualSignature = '';
-    }
-  })();
-
-  STATE.remainingAssetLoadPromise.finally(() => {
-    STATE.remainingAssetLoadPromise = null;
-  });
+    })
+    .catch((error) => {
+      console.warn('Deferred asset loading failed. Keeping fallback templates.', error);
+      STATE.nonDeskAssetsReady = true;
+      STATE.pendingVisualRebuild = true;
+      STATE.lastVisualSignature = '';
+    })
+    .finally(() => {
+      STATE.remainingAssetLoadPromise = null;
+    });
 
   return STATE.remainingAssetLoadPromise;
 }
 
 async function loadAssets() {
-  STATE.assetsLoading = true;
-  try {
-    const loader = new GLTFLoader();
-    await loadTemplateEntries(loader, getTemplateEntries());
-    STATE.nonDeskAssetsReady = true;
-  } catch (error) {
-    console.warn('Full asset loading failed. Using fallbacks.', error);
-    STATE.nonDeskAssetsReady = true;
-  } finally {
-    STATE.assetsLoading = false;
-  }
+  const loader = new GLTFLoader();
+  await loadTemplateEntries(loader, getTemplateEntries());
+  STATE.nonDeskAssetsReady = true;
 }
 
 async function loadTemplate(loader, key, filename, fallbackFactory) {
   let root;
 
   try {
-    const loadPromise = loader.loadAsync(`./assets/${filename}`);
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`Timeout loading ${filename}`)), GLB_LOAD_TIMEOUT_MS)
-    );
-    const gltf = await Promise.race([loadPromise, timeoutPromise]);
+    const gltf = await loader.loadAsync(`./assets/${filename}`);
     root = gltf.scene;
     root.animations = gltf.animations || [];
   } catch (error) {
@@ -5580,100 +5475,8 @@ function hideMemoHover() {
   }
 }
 
-function requestSafeAppReload(reason = 'unknown') {
-  if (STATE.freezeReloadTriggered) return;
-
-  const now = Date.now();
-  if (reason === 'frame-freeze') {
-    if (!STATE.appReady) return;
-    if (!STATE.loopStartedAt || performance.now() - STATE.loopStartedAt < FREEZE_RELOAD_STARTUP_GRACE_MS) {
-      return;
-    }
-  }
-
-  const storage = (() => {
-    try {
-      if (typeof sessionStorage !== 'undefined') return sessionStorage;
-    } catch (_) {}
-    try {
-      if (typeof localStorage !== 'undefined') return localStorage;
-    } catch (_) {}
-    return null;
-  })();
-
-  /* Prevent infinite reload loops: track recent reload count */
-  try {
-    const raw = storage?.getItem(FREEZE_RELOAD_COUNT_KEY);
-    const history = raw ? JSON.parse(raw) : [];
-    const recent = history.filter((t) => now - t < FREEZE_RELOAD_RAPID_WINDOW_MS);
-    if (recent.length >= FREEZE_RELOAD_MAX_RAPID) {
-      console.warn('Suppressed reload – too many rapid reloads. Continuing with fallback.');
-      return;
-    }
-    recent.push(now);
-    storage?.setItem(FREEZE_RELOAD_COUNT_KEY, JSON.stringify(recent));
-  } catch (_) {}
-
-  STATE.freezeReloadTriggered = true;
-
-  try {
-    storage?.setItem(FREEZE_RELOAD_REASON_KEY, JSON.stringify({ reason, at: now }));
-  } catch (_) {}
-
-  window.setTimeout(() => {
-    window.location.reload();
-  }, 0);
-}
-
-function setupFreezeReloadGuards() {
-  const canvas = STATE.renderer?.domElement;
-  if (canvas && !canvas.__freezeReloadBound) {
-    canvas.__freezeReloadBound = true;
-    canvas.addEventListener('webglcontextlost', (event) => {
-      event.preventDefault();
-      requestSafeAppReload('webgl-context-lost');
-    }, { passive: false });
-  }
-
-  if (STATE.freezeWatchdogTimer) return;
-
-  STATE.freezeWatchdogTimer = window.setInterval(() => {
-    if (STATE.freezeReloadTriggered || !STATE.loopStarted) return;
-    if (document.visibilityState !== 'visible') return;
-    /* Don't trigger reload while GLB assets are still loading */
-    if (STATE.assetsLoading) return;
-    if (!STATE.appReady) return;
-    if (!STATE.loopStartedAt || performance.now() - STATE.loopStartedAt < FREEZE_RELOAD_STARTUP_GRACE_MS) return;
-
-    try {
-      const gl = STATE.renderer?.getContext?.();
-      if (gl && typeof gl.isContextLost === 'function' && gl.isContextLost()) {
-        requestSafeAppReload('webgl-context-lost-check');
-        return;
-      }
-    } catch (_) {}
-
-    const staleFor = performance.now() - STATE.lastFrameHeartbeat;
-    if (staleFor >= FREEZE_RELOAD_THRESHOLD_MS) {
-      STATE.freezeStaleStrikeCount += 1;
-      if (STATE.freezeStaleStrikeCount >= FREEZE_RELOAD_STALE_STRIKES_REQUIRED) {
-        requestSafeAppReload('frame-freeze');
-      }
-      return;
-    }
-
-    STATE.freezeStaleStrikeCount = 0;
-  }, FREEZE_RELOAD_CHECK_MS);
-}
-
 function startLoop() {
-  STATE.loopStarted = true;
-  STATE.loopStartedAt = performance.now();
-  STATE.freezeStaleStrikeCount = 0;
-  STATE.lastFrameHeartbeat = performance.now();
-
   const frame = () => {
-    STATE.lastFrameHeartbeat = performance.now();
     const delta = Math.min(STATE.clock.getDelta(), 0.033);
     const now = Date.now();
 
@@ -6197,118 +6000,34 @@ function setupDeviceOrientation() {
   }
 }
 
-function isTabletLikeTiltDevice() {
-  const coarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false;
-  return coarsePointer && Math.min(window.innerWidth || 0, window.innerHeight || 0) >= 768;
-}
-
-function getScreenOrientationAngle() {
-  if (typeof screen !== 'undefined' && screen.orientation && typeof screen.orientation.angle === 'number') {
-    return screen.orientation.angle;
-  }
-  if (typeof window.orientation === 'number') {
-    return Number(window.orientation) || 0;
-  }
-  return 0;
-}
-
-function getEffectiveOrientationAngle() {
-  const reportedAngle = getScreenOrientationAngle();
-  /* Some newer iPads report angle=0 even when already in landscape. */
-  if (reportedAngle === 0 && isTabletLikeTiltDevice() && window.innerWidth > window.innerHeight) {
-    /* Latest iPad landscape behavior in this app matches the 270° mapping better. */
-    return 270;
-  }
-  return reportedAngle;
-}
-
 function updateTiltSmoothing() {
   if (!STATE.tilt.active) return;
-
-  const rawBeta = STATE.tilt.rawBeta;
+  /* Normalize beta(front-back) → Z force, gamma(left-right) → X force */
+  /* Use symmetric gamma mapping for balanced left-right movement */
   const rawGamma = STATE.tilt.rawGamma;
-  const isTabletLike = isTabletLikeTiltDevice();
-
-  const neutralBeta = isTabletLike ? PHYSICS_TABLET_BETA_NEUTRAL : PHYSICS_PHONE_BETA_NEUTRAL;
-  const shiftedBeta = rawBeta - neutralBeta;
-
-  let divisorX = PHYSICS_PHONE_TILT_DIVISOR_X;
-  let divisorZ = PHYSICS_PHONE_TILT_DIVISOR_Z;
-  let gain = 1;
-
-  if (isTabletLike) {
-    divisorX = PHYSICS_TABLET_TILT_DIVISOR_X;
-    divisorZ = PHYSICS_TABLET_TILT_DIVISOR_Z;
-    gain = PHYSICS_TABLET_TILT_GAIN;
-  }
-
-  /* Rotate raw device tilt by the screen orientation angle so that
-     screen-left always maps to world -X and screen-down to world +Z,
-     regardless of portrait / landscape / inverted orientation. */
-  const angle = getEffectiveOrientationAngle();
-  const rad = (angle * Math.PI) / 180;
-  const cosA = Math.cos(rad);
-  const sinA = Math.sin(rad);
-
-  const axisX = rawGamma * cosA + shiftedBeta * sinA;
-  const axisZ = -rawGamma * sinA + shiftedBeta * cosA;
-
-  const targetX = clamp(axisX / divisorX, -1, 1) * PHYSICS_TILT_FORCE * gain;
-  const targetZ = clamp(axisZ / divisorZ, -1, 1) * PHYSICS_TILT_FORCE * gain;
+  const targetX = clamp(rawGamma / 30, -1, 1) * PHYSICS_TILT_FORCE;
+  const targetZ = clamp((STATE.tilt.rawBeta - 45) / 30, -1, 1) * PHYSICS_TILT_FORCE;
   STATE.tilt.x += (targetX - STATE.tilt.x) * PHYSICS_TILT_SMOOTHING;
   STATE.tilt.z += (targetZ - STATE.tilt.z) * PHYSICS_TILT_SMOOTHING;
 }
 
 /* ═══ Physics System ═══ */
-function getPhysicsAgeStage(memo) {
-  if (!memo?.createdAt) return 'mid';
+function isRecentPhysicsLockedMemo(memo) {
+  if (!memo?.createdAt) return false;
   const ageMs = Date.now() - new Date(memo.createdAt).getTime();
   const ageHours = ageMs / (1000 * 60 * 60);
-  if (ageHours < PHYSICS_AGE_RECENT_HOURS) return 'recent';
-  const ageDays = ageHours / 24;
-  if (ageDays >= PHYSICS_AGE_OLD_DAYS) return 'old';
-  return 'mid';
-}
-
-function isRecentPhysicsLockedMemo(memo) {
-  return getPhysicsAgeStage(memo) === 'recent' && false;
+  return ageHours < PHYSICS_AGE_RECENT_HOURS;
 }
 
 function getPhysicsFriction(memo) {
-  const ageStage = getPhysicsAgeStage(memo);
-  if (ageStage === 'recent') return PHYSICS_FRICTION_RECENT;
-  if (ageStage === 'old') return PHYSICS_FRICTION_OLD;
-  return PHYSICS_FRICTION_MID;
-}
-
-function getPhysicsFloorRollFriction(memo, visual) {
-  const ageStage = getPhysicsAgeStage(memo);
-  let friction = PHYSICS_FLOOR_ROLL_FRICTION_MID;
-
-  if (ageStage === 'recent') friction = PHYSICS_FLOOR_ROLL_FRICTION_RECENT;
-  else if (ageStage === 'old') friction = PHYSICS_FLOOR_ROLL_FRICTION_OLD;
-
-  const assetKey = visual?.object?.userData?.assetKey || '';
-  if (PHYSICS_TILT_PRIORITY_ASSET_KEYS.has(assetKey)) {
-    friction -= PHYSICS_FLOOR_ROLL_PRIORITY_EXTRA;
-  }
-
-  return clamp(friction, 0.84, 0.96);
-}
-
-function getPhysicsTiltResponseMultiplier(memo, visual) {
-  const ageStage = getPhysicsAgeStage(memo);
-  let multiplier = PHYSICS_TILT_MULTIPLIER_MID;
-
-  if (ageStage === 'recent') multiplier = PHYSICS_TILT_MULTIPLIER_RECENT;
-  else if (ageStage === 'old') multiplier = PHYSICS_TILT_MULTIPLIER_OLD;
-
-  const assetKey = visual?.object?.userData?.assetKey || '';
-  if (PHYSICS_TILT_PRIORITY_ASSET_KEYS.has(assetKey)) {
-    multiplier *= PHYSICS_TILT_PRIORITY_ASSET_MULTIPLIER;
-  }
-
-  return multiplier;
+  if (!memo) return PHYSICS_FRICTION_MID;
+  const ageMs = Date.now() - new Date(memo.createdAt).getTime();
+  const ageHours = ageMs / (1000 * 60 * 60);
+  if (ageHours < PHYSICS_AGE_RECENT_HOURS) return PHYSICS_FRICTION_RECENT;
+  const ageDays = ageHours / 24;
+  if (ageDays >= PHYSICS_AGE_OLD_DAYS) return PHYSICS_FRICTION_OLD;
+  const t = (ageDays - (PHYSICS_AGE_RECENT_HOURS / 24)) / (PHYSICS_AGE_OLD_DAYS - (PHYSICS_AGE_RECENT_HOURS / 24));
+  return THREE.MathUtils.lerp(PHYSICS_FRICTION_RECENT, PHYSICS_FRICTION_OLD, clamp(t, 0, 1));
 }
 
 function getDeskCollisionBounds() {
@@ -6426,31 +6145,31 @@ function updatePhysics(delta) {
     if (m && m.id) memoMap.set(m.id, m);
   }
 
-  const activeGroundVisuals = [];
+  const activeDeskVisuals = [];
   STATE.visuals.forEach((visual) => {
     if (visual.kind !== 'asset' || !visual.object || !visual.phys) return;
     if (visual === STATE.grabbedVisual) return;
     if (visual.dropIntro) return;
+    const memo = visual.memoIds?.length ? memoMap.get(visual.memoIds[0]) || null : null;
+    if (isRecentPhysicsLockedMemo(memo)) return;
     if (visual.phys.airborne) return;
-    activeGroundVisuals.push(visual);
+    if (!visual.phys.onDesk) return;
+    activeDeskVisuals.push(visual);
   });
 
   const sepImpulses = new Map();
-  for (let i = 0; i < activeGroundVisuals.length; i++) {
-    const a = activeGroundVisuals[i];
+  for (let i = 0; i < activeDeskVisuals.length; i++) {
+    const a = activeDeskVisuals[i];
     if (!sepImpulses.has(a)) sepImpulses.set(a, { x: 0, z: 0 });
-    for (let j = i + 1; j < activeGroundVisuals.length; j++) {
-      const b = activeGroundVisuals[j];
+    for (let j = i + 1; j < activeDeskVisuals.length; j++) {
+      const b = activeDeskVisuals[j];
       if (!sepImpulses.has(b)) sepImpulses.set(b, { x: 0, z: 0 });
       const dx = a.object.position.x - b.object.position.x;
       const dz = a.object.position.z - b.object.position.z;
       const dist = Math.sqrt(dx * dx + dz * dz);
-      const usesFloorSeparation = !a.phys.onDesk || !b.phys.onDesk;
-      const separationRadius = usesFloorSeparation ? PHYSICS_FLOOR_SEPARATION_RADIUS : PHYSICS_SEPARATION_RADIUS;
-      const separationForce = usesFloorSeparation ? PHYSICS_FLOOR_SEPARATION_FORCE : PHYSICS_SEPARATION_FORCE;
-      if (dist < separationRadius && dist > 0.001) {
-        const overlap = (separationRadius - dist) / separationRadius;
-        const strength = overlap * overlap * separationForce;
+      if (dist < PHYSICS_SEPARATION_RADIUS && dist > 0.001) {
+        const overlap = (PHYSICS_SEPARATION_RADIUS - dist) / PHYSICS_SEPARATION_RADIUS;
+        const strength = overlap * overlap * PHYSICS_SEPARATION_FORCE;
         const nx = dx / dist;
         const nz = dz / dist;
         const impA = sepImpulses.get(a);
@@ -6470,8 +6189,15 @@ function updatePhysics(delta) {
 
     const p = visual.phys;
     const memo = visual.memoIds?.length ? memoMap.get(visual.memoIds[0]) || null : null;
-    const tiltResponseMultiplier = getPhysicsTiltResponseMultiplier(memo, visual);
     p.friction = getPhysicsFriction(memo);
+
+    if (isRecentPhysicsLockedMemo(memo) && !p.airborne) {
+      p.vx = 0;
+      p.vy = 0;
+      p.vz = 0;
+      settleVisualAtCurrentXZ(visual);
+      return;
+    }
 
     if (p.airborne) {
       const prevX = visual.object.position.x;
@@ -6536,8 +6262,8 @@ function updatePhysics(delta) {
 
     if (p.onDesk) {
       if (hasForce) {
-        p.vx += forceX * tiltResponseMultiplier * (1 - p.friction) * 0.8;
-        p.vz += forceZ * tiltResponseMultiplier * (1 - p.friction) * 0.8;
+        p.vx += forceX * (1 - p.friction) * 0.8;
+        p.vz += forceZ * (1 - p.friction) * 0.8;
         p.settled = false;
       }
 
@@ -6586,14 +6312,13 @@ function updatePhysics(delta) {
     }
 
     if (hasForce) {
-      p.vx += forceX * tiltResponseMultiplier * (1 - p.friction) * 0.8;
-      p.vz += forceZ * tiltResponseMultiplier * (1 - p.friction) * 0.8;
+      p.vx += forceX * (1 - p.friction) * 0.8;
+      p.vz += forceZ * (1 - p.friction) * 0.8;
       p.settled = false;
     }
 
-    const floorRollFriction = getPhysicsFloorRollFriction(memo, visual);
-    p.vx *= floorRollFriction;
-    p.vz *= floorRollFriction;
+    p.vx *= PHYSICS_FLOOR_ROLL_FRICTION;
+    p.vz *= PHYSICS_FLOOR_ROLL_FRICTION;
 
     const floorSpeed = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
     if (floorSpeed < PHYSICS_REST_THRESHOLD && !hasForce) {
