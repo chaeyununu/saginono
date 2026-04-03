@@ -59,8 +59,10 @@ const IDB_DB_NAME = 'mind-room-db';
 const IDB_STORE_NAME = 'app-data';
 const IDB_DB_VERSION = 1;
 const GOOGLE_BROWSER_PROMPT_SESSION_KEY = 'mind-room-google-browser-prompt-dismissed-v1';
-const FREEZE_RELOAD_THRESHOLD_MS = 3000;
-const FREEZE_RELOAD_CHECK_MS = 1000;
+const FREEZE_RELOAD_THRESHOLD_MS = 12000;
+const FREEZE_RELOAD_CHECK_MS = 1500;
+const FREEZE_RELOAD_STARTUP_GRACE_MS = 20000;
+const FREEZE_RELOAD_STALE_STRIKES_REQUIRED = 3;
 const FREEZE_RELOAD_REASON_KEY = 'mind-room-freeze-reload-reason-v1';
 const FREEZE_RELOAD_COUNT_KEY = 'mind-room-freeze-reload-count-v1';
 const FREEZE_RELOAD_MAX_RAPID = 3;
@@ -1090,6 +1092,8 @@ const STATE = {
   assetsLoading: false,
   lastFrameHeartbeat: performance.now(),
   loopStarted: false,
+  loopStartedAt: 0,
+  freezeStaleStrikeCount: 0,
   idbDatabase: null,
   easter: {
     overlayRoot: null,
@@ -5543,24 +5547,41 @@ function hideMemoHover() {
 function requestSafeAppReload(reason = 'unknown') {
   if (STATE.freezeReloadTriggered) return;
 
+  const now = Date.now();
+  if (reason === 'frame-freeze') {
+    if (!STATE.appReady) return;
+    if (!STATE.loopStartedAt || performance.now() - STATE.loopStartedAt < FREEZE_RELOAD_STARTUP_GRACE_MS) {
+      return;
+    }
+  }
+
+  const storage = (() => {
+    try {
+      if (typeof sessionStorage !== 'undefined') return sessionStorage;
+    } catch (_) {}
+    try {
+      if (typeof localStorage !== 'undefined') return localStorage;
+    } catch (_) {}
+    return null;
+  })();
+
   /* Prevent infinite reload loops: track recent reload count */
   try {
-    const raw = sessionStorage.getItem(FREEZE_RELOAD_COUNT_KEY);
+    const raw = storage?.getItem(FREEZE_RELOAD_COUNT_KEY);
     const history = raw ? JSON.parse(raw) : [];
-    const now = Date.now();
     const recent = history.filter((t) => now - t < FREEZE_RELOAD_RAPID_WINDOW_MS);
     if (recent.length >= FREEZE_RELOAD_MAX_RAPID) {
       console.warn('Suppressed reload – too many rapid reloads. Continuing with fallback.');
       return;
     }
     recent.push(now);
-    sessionStorage.setItem(FREEZE_RELOAD_COUNT_KEY, JSON.stringify(recent));
+    storage?.setItem(FREEZE_RELOAD_COUNT_KEY, JSON.stringify(recent));
   } catch (_) {}
 
   STATE.freezeReloadTriggered = true;
 
   try {
-    sessionStorage.setItem(FREEZE_RELOAD_REASON_KEY, JSON.stringify({ reason, at: Date.now() }));
+    storage?.setItem(FREEZE_RELOAD_REASON_KEY, JSON.stringify({ reason, at: now }));
   } catch (_) {}
 
   window.setTimeout(() => {
@@ -5585,6 +5606,8 @@ function setupFreezeReloadGuards() {
     if (document.visibilityState !== 'visible') return;
     /* Don't trigger reload while GLB assets are still loading */
     if (STATE.assetsLoading) return;
+    if (!STATE.appReady) return;
+    if (!STATE.loopStartedAt || performance.now() - STATE.loopStartedAt < FREEZE_RELOAD_STARTUP_GRACE_MS) return;
 
     try {
       const gl = STATE.renderer?.getContext?.();
@@ -5596,13 +5619,21 @@ function setupFreezeReloadGuards() {
 
     const staleFor = performance.now() - STATE.lastFrameHeartbeat;
     if (staleFor >= FREEZE_RELOAD_THRESHOLD_MS) {
-      requestSafeAppReload('frame-freeze');
+      STATE.freezeStaleStrikeCount += 1;
+      if (STATE.freezeStaleStrikeCount >= FREEZE_RELOAD_STALE_STRIKES_REQUIRED) {
+        requestSafeAppReload('frame-freeze');
+      }
+      return;
     }
+
+    STATE.freezeStaleStrikeCount = 0;
   }, FREEZE_RELOAD_CHECK_MS);
 }
 
 function startLoop() {
   STATE.loopStarted = true;
+  STATE.loopStartedAt = performance.now();
+  STATE.freezeStaleStrikeCount = 0;
   STATE.lastFrameHeartbeat = performance.now();
 
   const frame = () => {
@@ -6147,10 +6178,10 @@ function getScreenOrientationAngle() {
 
 function getEffectiveOrientationAngle() {
   const reportedAngle = getScreenOrientationAngle();
-  /* Some iPads report angle=0 even when in landscape. Detect and correct. */
+  /* Some newer iPads report angle=0 even when already in landscape. */
   if (reportedAngle === 0 && isTabletLikeTiltDevice() && window.innerWidth > window.innerHeight) {
-    /* Landscape with home-button right is the most common default on iPad. */
-    return 90;
+    /* Latest iPad landscape behavior in this app matches the 270° mapping better. */
+    return 270;
   }
   return reportedAngle;
 }
