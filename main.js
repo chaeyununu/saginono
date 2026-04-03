@@ -25,8 +25,10 @@ const PHYSICS_THROW_MULTIPLIER = 0.032;
 const PHYSICS_THROW_FRICTION = 0.92;
 const PHYSICS_BOUNCE_FACTOR = 0.45;
 const PHYSICS_ROOM_BOUNDS = { minX: -8.5, maxX: 8.5, minZ: -5.8, maxZ: 5.4 };
-const PHYSICS_SEPARATION_RADIUS = 1.75;
-const PHYSICS_SEPARATION_FORCE = 0.03;
+const PHYSICS_SEPARATION_RADIUS = 1.85;
+const PHYSICS_SEPARATION_FORCE = 0.036;
+const PHYSICS_FLOOR_SEPARATION_RADIUS = 1.42;
+const PHYSICS_FLOOR_SEPARATION_FORCE = 0.022;
 const LONG_PRESS_MS = 0;
 const DRAG_DEAD_ZONE = 3;
 const DRAG_LERP = 0.55;
@@ -37,6 +39,17 @@ const PHYSICS_VERTICAL_BOUNCE = 0.2;
 const PHYSICS_THROW_UPWARD = 0.14;
 const PHYSICS_DESK_EDGE_FALL_SPEED = -0.035;
 const PHYSICS_FLOOR_ROLL_FRICTION = 0.965;
+const PHYSICS_FLOOR_ROLL_FRICTION_RECENT = 0.94;
+const PHYSICS_FLOOR_ROLL_FRICTION_MID = 0.915;
+const PHYSICS_FLOOR_ROLL_FRICTION_OLD = 0.885;
+const PHYSICS_FLOOR_ROLL_PRIORITY_EXTRA = 0.022;
+const PHYSICS_TABLET_TILT_GAIN = 1.18;
+const PHYSICS_TABLET_TILT_DIVISOR_X = 23;
+const PHYSICS_TABLET_TILT_DIVISOR_Z = 21;
+const PHYSICS_PHONE_TILT_DIVISOR_X = 30;
+const PHYSICS_PHONE_TILT_DIVISOR_Z = 30;
+const PHYSICS_PHONE_BETA_NEUTRAL = 45;
+const PHYSICS_TABLET_BETA_NEUTRAL = 28;
 const DESK_SURFACE_SIDE_INSET = 0.08;
 const DESK_SURFACE_BACK_INSET = 0.08;
 const DESK_SURFACE_FRONT_INSET = 0.72;
@@ -6061,13 +6074,58 @@ function setupDeviceOrientation() {
   }
 }
 
+function isTabletLikeTiltDevice() {
+  const coarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+  return coarsePointer && Math.min(window.innerWidth || 0, window.innerHeight || 0) >= 768;
+}
+
+function getScreenOrientationAngle() {
+  if (typeof screen !== 'undefined' && screen.orientation && typeof screen.orientation.angle === 'number') {
+    return screen.orientation.angle;
+  }
+  if (typeof window.orientation === 'number') {
+    return Number(window.orientation) || 0;
+  }
+  return 0;
+}
+
 function updateTiltSmoothing() {
   if (!STATE.tilt.active) return;
-  /* Normalize beta(front-back) → Z force, gamma(left-right) → X force */
-  /* Use symmetric gamma mapping for balanced left-right movement */
+
+  const rawBeta = STATE.tilt.rawBeta;
   const rawGamma = STATE.tilt.rawGamma;
-  const targetX = clamp(rawGamma / 30, -1, 1) * PHYSICS_TILT_FORCE;
-  const targetZ = clamp((STATE.tilt.rawBeta - 45) / 30, -1, 1) * PHYSICS_TILT_FORCE;
+  const isTabletLike = isTabletLikeTiltDevice();
+  const angle = getScreenOrientationAngle();
+  const isLandscapeLike = Math.abs(angle) === 90 || (isTabletLike && window.innerWidth > window.innerHeight);
+
+  let axisX = rawGamma;
+  let axisZ = rawBeta - PHYSICS_PHONE_BETA_NEUTRAL;
+  let divisorX = PHYSICS_PHONE_TILT_DIVISOR_X;
+  let divisorZ = PHYSICS_PHONE_TILT_DIVISOR_Z;
+  let gain = 1;
+
+  if (isTabletLike) {
+    divisorX = PHYSICS_TABLET_TILT_DIVISOR_X;
+    divisorZ = PHYSICS_TABLET_TILT_DIVISOR_Z;
+    gain = PHYSICS_TABLET_TILT_GAIN;
+
+    if (isLandscapeLike) {
+      const shiftedBeta = rawBeta - PHYSICS_TABLET_BETA_NEUTRAL;
+      if (angle === -90 || angle === 270) {
+        axisX = -shiftedBeta;
+        axisZ = rawGamma;
+      } else {
+        axisX = shiftedBeta;
+        axisZ = -rawGamma;
+      }
+    } else {
+      axisX = rawGamma;
+      axisZ = rawBeta - PHYSICS_TABLET_BETA_NEUTRAL;
+    }
+  }
+
+  const targetX = clamp(axisX / divisorX, -1, 1) * PHYSICS_TILT_FORCE * gain;
+  const targetZ = clamp(axisZ / divisorZ, -1, 1) * PHYSICS_TILT_FORCE * gain;
   STATE.tilt.x += (targetX - STATE.tilt.x) * PHYSICS_TILT_SMOOTHING;
   STATE.tilt.z += (targetZ - STATE.tilt.z) * PHYSICS_TILT_SMOOTHING;
 }
@@ -6092,6 +6150,21 @@ function getPhysicsFriction(memo) {
   if (ageStage === 'recent') return PHYSICS_FRICTION_RECENT;
   if (ageStage === 'old') return PHYSICS_FRICTION_OLD;
   return PHYSICS_FRICTION_MID;
+}
+
+function getPhysicsFloorRollFriction(memo, visual) {
+  const ageStage = getPhysicsAgeStage(memo);
+  let friction = PHYSICS_FLOOR_ROLL_FRICTION_MID;
+
+  if (ageStage === 'recent') friction = PHYSICS_FLOOR_ROLL_FRICTION_RECENT;
+  else if (ageStage === 'old') friction = PHYSICS_FLOOR_ROLL_FRICTION_OLD;
+
+  const assetKey = visual?.object?.userData?.assetKey || '';
+  if (PHYSICS_TILT_PRIORITY_ASSET_KEYS.has(assetKey)) {
+    friction -= PHYSICS_FLOOR_ROLL_PRIORITY_EXTRA;
+  }
+
+  return clamp(friction, 0.84, 0.96);
 }
 
 function getPhysicsTiltResponseMultiplier(memo, visual) {
@@ -6224,30 +6297,31 @@ function updatePhysics(delta) {
     if (m && m.id) memoMap.set(m.id, m);
   }
 
-  const activeDeskVisuals = [];
+  const activeGroundVisuals = [];
   STATE.visuals.forEach((visual) => {
     if (visual.kind !== 'asset' || !visual.object || !visual.phys) return;
     if (visual === STATE.grabbedVisual) return;
     if (visual.dropIntro) return;
-    const memo = visual.memoIds?.length ? memoMap.get(visual.memoIds[0]) || null : null;
     if (visual.phys.airborne) return;
-    if (!visual.phys.onDesk) return;
-    activeDeskVisuals.push(visual);
+    activeGroundVisuals.push(visual);
   });
 
   const sepImpulses = new Map();
-  for (let i = 0; i < activeDeskVisuals.length; i++) {
-    const a = activeDeskVisuals[i];
+  for (let i = 0; i < activeGroundVisuals.length; i++) {
+    const a = activeGroundVisuals[i];
     if (!sepImpulses.has(a)) sepImpulses.set(a, { x: 0, z: 0 });
-    for (let j = i + 1; j < activeDeskVisuals.length; j++) {
-      const b = activeDeskVisuals[j];
+    for (let j = i + 1; j < activeGroundVisuals.length; j++) {
+      const b = activeGroundVisuals[j];
       if (!sepImpulses.has(b)) sepImpulses.set(b, { x: 0, z: 0 });
       const dx = a.object.position.x - b.object.position.x;
       const dz = a.object.position.z - b.object.position.z;
       const dist = Math.sqrt(dx * dx + dz * dz);
-      if (dist < PHYSICS_SEPARATION_RADIUS && dist > 0.001) {
-        const overlap = (PHYSICS_SEPARATION_RADIUS - dist) / PHYSICS_SEPARATION_RADIUS;
-        const strength = overlap * overlap * PHYSICS_SEPARATION_FORCE;
+      const usesFloorSeparation = !a.phys.onDesk || !b.phys.onDesk;
+      const separationRadius = usesFloorSeparation ? PHYSICS_FLOOR_SEPARATION_RADIUS : PHYSICS_SEPARATION_RADIUS;
+      const separationForce = usesFloorSeparation ? PHYSICS_FLOOR_SEPARATION_FORCE : PHYSICS_SEPARATION_FORCE;
+      if (dist < separationRadius && dist > 0.001) {
+        const overlap = (separationRadius - dist) / separationRadius;
+        const strength = overlap * overlap * separationForce;
         const nx = dx / dist;
         const nz = dz / dist;
         const impA = sepImpulses.get(a);
@@ -6388,8 +6462,9 @@ function updatePhysics(delta) {
       p.settled = false;
     }
 
-    p.vx *= PHYSICS_FLOOR_ROLL_FRICTION;
-    p.vz *= PHYSICS_FLOOR_ROLL_FRICTION;
+    const floorRollFriction = getPhysicsFloorRollFriction(memo, visual);
+    p.vx *= floorRollFriction;
+    p.vz *= floorRollFriction;
 
     const floorSpeed = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
     if (floorSpeed < PHYSICS_REST_THRESHOLD && !hasForce) {
