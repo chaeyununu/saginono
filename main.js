@@ -1049,7 +1049,8 @@ const STATE = {
   loadingOverlay: null,
   nonDeskAssetsReady: false,
   remainingAssetLoadPromise: null,
-  deferredVisualRevealScheduled: false,
+  remainingAssetRetryTimer: null,
+  deferredVisualRevealMemoId: null,
   playedEmotionRewardDropMemoIds: new Set(),
   layoutCache: Object.create(null),
   /* physics & interaction */
@@ -1680,17 +1681,14 @@ async function init() {
     if (shouldUseDeskFirstLoading()) {
       await loadDeskAsset();
       buildDeskAndDecor();
+      renderHistory();
       setupDeviceOrientation();
       setupInteraction();
       maybeTriggerReloadRa3();
       startLoop();
       STATE.appReady = true;
       hideLoadingOverlay();
-      renderHistory();
-
-      scheduleDeferredTask(() => {
-        void loadRemainingAssetsInBackground();
-      }, 800);
+      void loadRemainingAssetsInBackground();
       return;
     }
 
@@ -2170,10 +2168,17 @@ function createMemoFromTranscript(transcript) {
 
   snapshotLiveVisualTransformsToLayoutCache();
   STATE.memos.unshift(memo);
-  const handledIncrementally = createAndAttachVisualForMemo(memo, memo.id);
+  const handledIncrementally = STATE.nonDeskAssetsReady
+    ? createAndAttachVisualForMemo(memo, memo.id)
+    : false;
   persistStorage();
-  if (!handledIncrementally) {
-    rebuildVisuals(memo.id);
+  if (STATE.nonDeskAssetsReady) {
+    if (!handledIncrementally) {
+      rebuildVisuals(memo.id);
+    }
+  } else {
+    STATE.deferredVisualRevealMemoId = memo.id;
+    void loadRemainingAssetsInBackground();
   }
   renderHistory();
   resetDeleteStreak();
@@ -2337,67 +2342,6 @@ function shouldUseDeskFirstLoading() {
   return true;
 }
 
-function scheduleDeferredTask(task, timeout = 1200) {
-  if (typeof task !== 'function') return null;
-
-  if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
-    return window.requestIdleCallback(() => {
-      try {
-        task();
-      } catch (error) {
-        console.warn('Deferred task failed.', error);
-      }
-    }, { timeout });
-  }
-
-  return window.setTimeout(() => {
-    try {
-      task();
-    } catch (error) {
-      console.warn('Deferred task failed.', error);
-    }
-  }, Math.min(timeout, 160));
-}
-
-function scheduleDeferredVisualReveal() {
-  if (STATE.deferredVisualRevealScheduled) return;
-  STATE.deferredVisualRevealScheduled = true;
-
-  const reveal = () => {
-    STATE.deferredVisualRevealScheduled = false;
-    STATE.pendingVisualRebuild = true;
-    STATE.lastVisualSignature = '';
-  };
-
-  const scheduleReveal = () => scheduleDeferredTask(reveal, 1800);
-
-  if (typeof document !== 'undefined' && document.hidden) {
-    const onVisible = () => {
-      if (document.hidden) return;
-      document.removeEventListener('visibilitychange', onVisible);
-      scheduleReveal();
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    return;
-  }
-
-  scheduleReveal();
-}
-
-function getTemplateEntryByKey(key) {
-  return getTemplateEntries().find(([entryKey]) => entryKey === key) || null;
-}
-
-function ensureDeferredFallbackTemplate(key) {
-  if (STATE.templates[key]) return STATE.templates[key];
-  const entry = getTemplateEntryByKey(key);
-  if (!entry) return null;
-  const [, , fallbackFactory] = entry;
-  const template = createFallbackTemplate(key, fallbackFactory);
-  STATE.templates[key] = template;
-  return template;
-}
-
 function finalizeTemplateRoot(root, key) {
   normalizeTemplate(root, key);
   applyShadowSettings(root);
@@ -2414,6 +2358,11 @@ function createFallbackTemplate(key, fallbackFactory) {
   return finalizeTemplateRoot(root, key);
 }
 
+function primeFallbackTemplatesForDeferredAssets() {
+  /* Non-desk fallback priming intentionally disabled.
+     Non-desk visuals are revealed only after every non-desk GLB finishes loading. */
+}
+
 async function loadTemplateEntries(loader, entries) {
   const results = await Promise.all(
     entries.map(([key, filename, fallback]) => loadTemplate(loader, key, filename, fallback))
@@ -2424,11 +2373,23 @@ async function loadTemplateEntries(loader, entries) {
   });
 }
 
-async function loadTemplateEntriesSequentially(loader, entries) {
-  for (const [key, filename, fallback] of entries) {
-    STATE.templates[key] = await loadTemplate(loader, key, filename, fallback);
-    await new Promise((resolve) => window.setTimeout(resolve, 0));
-  }
+function waitForNextMacrotask() {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, 0);
+  });
+}
+
+function queueRemainingAssetRetry(delay = 2500) {
+  if (STATE.nonDeskAssetsReady || STATE.remainingAssetRetryTimer) return;
+  STATE.remainingAssetRetryTimer = window.setTimeout(() => {
+    STATE.remainingAssetRetryTimer = null;
+    if (STATE.nonDeskAssetsReady) return;
+    if (document.visibilityState === 'hidden') {
+      queueRemainingAssetRetry(delay);
+      return;
+    }
+    void loadRemainingAssetsInBackground();
+  }, delay);
 }
 
 async function loadDeskAsset() {
@@ -2438,25 +2399,42 @@ async function loadDeskAsset() {
 }
 
 async function loadRemainingAssetsInBackground() {
-  if (STATE.nonDeskAssetsReady) return;
+  if (STATE.nonDeskAssetsReady) return true;
   if (STATE.remainingAssetLoadPromise) return STATE.remainingAssetLoadPromise;
 
   const loader = new GLTFLoader();
   const deferredEntries = getTemplateEntries().filter(([key]) => key !== 'desk');
 
-  STATE.remainingAssetLoadPromise = loadTemplateEntriesSequentially(loader, deferredEntries)
-    .then(() => {
+  STATE.remainingAssetLoadPromise = (async () => {
+    let allLoaded = true;
+
+    for (const [key, filename, fallbackFactory] of deferredEntries) {
+      if (STATE.templates[key]) continue;
+
+      try {
+        STATE.templates[key] = await loadTemplate(loader, key, filename, fallbackFactory, { allowFallback: false });
+      } catch (error) {
+        allLoaded = false;
+        console.warn(`Deferred asset load failed for ${filename}. Will retry later without attaching fallback.`, error);
+      }
+
+      await waitForNextMacrotask();
+    }
+
+    const hasEveryNonDeskTemplate = deferredEntries.every(([key]) => Boolean(STATE.templates[key]));
+
+    if (allLoaded && hasEveryNonDeskTemplate) {
       STATE.nonDeskAssetsReady = true;
-      scheduleDeferredVisualReveal();
-    })
-    .catch((error) => {
-      console.warn('Deferred asset loading failed. Keeping fallback templates.', error);
-      STATE.nonDeskAssetsReady = true;
-      scheduleDeferredVisualReveal();
-    })
-    .finally(() => {
-      STATE.remainingAssetLoadPromise = null;
-    });
+      STATE.pendingVisualRebuild = true;
+      STATE.lastVisualSignature = '';
+      return true;
+    }
+
+    queueRemainingAssetRetry();
+    return false;
+  })().finally(() => {
+    STATE.remainingAssetLoadPromise = null;
+  });
 
   return STATE.remainingAssetLoadPromise;
 }
@@ -2467,7 +2445,8 @@ async function loadAssets() {
   STATE.nonDeskAssetsReady = true;
 }
 
-async function loadTemplate(loader, key, filename, fallbackFactory) {
+async function loadTemplate(loader, key, filename, fallbackFactory, options = {}) {
+  const { allowFallback = true } = options;
   let root;
 
   try {
@@ -2475,6 +2454,9 @@ async function loadTemplate(loader, key, filename, fallbackFactory) {
     root = gltf.scene;
     root.animations = gltf.animations || [];
   } catch (error) {
+    if (!allowFallback) {
+      throw error;
+    }
     console.warn(`Failed to load ${filename}. Using fallback.`, error);
     root = fallbackFactory();
     root.animations = [];
@@ -3066,9 +3048,10 @@ function buildStaticDecor() {
 }
 
 function createAssetInstance(key) {
-  const template = STATE.templates[key] || ensureDeferredFallbackTemplate(key);
+  const template = STATE.templates[key];
   if (!template) {
-    throw new Error(`Missing asset template: ${key}`);
+    console.warn(`Asset template is not ready for key: ${key}`);
+    return null;
   }
   const root = template.animations.length ? cloneSkeleton(template.root) : template.root.clone(true);
   root.userData.assetKey = key;
@@ -3579,6 +3562,12 @@ function buildActiveLayoutKeys({ records, clutterFresh, clutterOld, routines, sn
 function rebuildVisuals(animateMemoId = null) {
   snapshotLiveVisualTransformsToLayoutCache();
   disposeVisuals();
+
+  if (shouldUseDeskFirstLoading() && !STATE.nonDeskAssetsReady) {
+    updateCounts();
+    STATE.lastVisualSignature = buildVisualSignature();
+    return;
+  }
 
   const activeMemos = STATE.memos.filter((memo) => !memo.clearedAt);
   const now = Date.now();
@@ -5570,9 +5559,11 @@ function startLoop() {
       }
     });
 
-    if (STATE.pendingVisualRebuild) {
+    if (STATE.pendingVisualRebuild && STATE.nonDeskAssetsReady) {
       STATE.pendingVisualRebuild = false;
-      rebuildVisuals();
+      const animateMemoId = STATE.deferredVisualRevealMemoId;
+      STATE.deferredVisualRevealMemoId = null;
+      rebuildVisuals(animateMemoId);
       renderHistory();
     }
 
@@ -6024,7 +6015,11 @@ function importMemosJSON() {
       }
 
       persistStorage();
-      rebuildVisuals();
+      if (STATE.nonDeskAssetsReady) {
+        rebuildVisuals();
+      } else {
+        void loadRemainingAssetsInBackground();
+      }
       renderHistory();
       alert(`${addedCount}개의 메모를 가져왔습니다.`);
     } catch (e) {
