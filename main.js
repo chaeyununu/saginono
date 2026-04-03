@@ -70,6 +70,9 @@ const FREEZE_RELOAD_RAPID_WINDOW_MS = 15000;
 const GLB_LOAD_TIMEOUT_MS = 8000;
 const GLB_BACKGROUND_RETRY_DELAY_MS = 5000;
 const GLB_BACKGROUND_MAX_RETRIES = 4;
+const GLB_BACKGROUND_BATCH_SIZE_DEFAULT = 3;
+const GLB_BACKGROUND_BATCH_SIZE_TABLET_SAFARI = 2;
+const GLB_BACKGROUND_BATCH_DELAY_MS = 90;
 const DUMMY_MEMO_SEED_COUNT = 30;
 const DUMMY_MEMO_SEED_VERSION = 'demo-seed-v1';
 
@@ -2392,6 +2395,26 @@ function createFallbackTemplate(key, fallbackFactory) {
   return finalizeTemplateRoot(root, key);
 }
 
+function isTabletSafariAssetLoadTarget() {
+  const ua = navigator.userAgent || '';
+  const isSafari = /Safari/i.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS|GSA|DuckDuckGo|YaBrowser/i.test(ua);
+  return isSafari && isTabletLikeTiltDevice();
+}
+
+function getDeferredAssetBatchSize() {
+  return isTabletSafariAssetLoadTarget()
+    ? GLB_BACKGROUND_BATCH_SIZE_TABLET_SAFARI
+    : GLB_BACKGROUND_BATCH_SIZE_DEFAULT;
+}
+
+function waitForDeferredAssetBatchGap() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      setTimeout(resolve, GLB_BACKGROUND_BATCH_DELAY_MS);
+    });
+  });
+}
+
 function primeFallbackTemplatesForDeferredAssets() {
   getTemplateEntries().forEach(([key, , fallbackFactory]) => {
     if (STATE.templates[key]) return;
@@ -2399,14 +2422,24 @@ function primeFallbackTemplatesForDeferredAssets() {
   });
 }
 
-async function loadTemplateEntries(loader, entries) {
-  const results = await Promise.all(
-    entries.map(([key, filename, fallback]) => loadTemplate(loader, key, filename, fallback))
-  );
+async function loadTemplateEntries(loader, entries, options = {}) {
+  const batchSize = Math.max(1, Number(options.batchSize) || entries.length || 1);
+  const yieldBetweenBatches = Boolean(options.yieldBetweenBatches);
 
-  entries.forEach(([key], index) => {
-    STATE.templates[key] = results[index];
-  });
+  for (let start = 0; start < entries.length; start += batchSize) {
+    const batchEntries = entries.slice(start, start + batchSize);
+    const results = await Promise.all(
+      batchEntries.map(([key, filename, fallback]) => loadTemplate(loader, key, filename, fallback))
+    );
+
+    batchEntries.forEach(([key], index) => {
+      STATE.templates[key] = results[index];
+    });
+
+    if (yieldBetweenBatches && start + batchSize < entries.length) {
+      await waitForDeferredAssetBatchGap();
+    }
+  }
 }
 
 async function loadDeskAsset() {
@@ -2433,7 +2466,10 @@ async function loadRemainingAssetsInBackground() {
       try {
         const loader = new GLTFLoader();
         const deferredEntries = getTemplateEntries().filter(([key]) => key !== 'desk');
-        await loadTemplateEntries(loader, deferredEntries);
+        await loadTemplateEntries(loader, deferredEntries, {
+          batchSize: getDeferredAssetBatchSize(),
+          yieldBetweenBatches: true,
+        });
         STATE.nonDeskAssetsReady = true;
         STATE.pendingVisualRebuild = true;
         STATE.lastVisualSignature = '';
