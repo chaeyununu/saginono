@@ -4,19 +4,48 @@ import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 
 const STORAGE_KEY = 'mind-room-memos-v3';
 const STORAGE_PAYLOAD_VERSION = 4;
-const ENABLE_HEAVY_DUMMY_MEMOS = false;
-const DUMMY_MEMO_ID_PREFIX = 'dummy-mixed-20260329-v7-100-old-recent';
-const HEAVY_DUMMY_MEMO_COUNTS = Object.freeze({
-  clutter: 20,
-  routine: 20,
-  record: 20,
-  snack: 20,
-  emotion: 20,
-});
 const NON_DESK_SCALE_MULTIPLIER = 2;
 
-const SILENCE_MS = 3000;
-const SPEECH_FINALIZE_GRACE_MS = 3000;
+/* ═══ Physics & Interaction Constants ═══ */
+const PHYSICS_FRICTION_RECENT = 0.992;
+const PHYSICS_FRICTION_OLD = 0.42;
+const PHYSICS_FRICTION_MID = 0.78;
+const PHYSICS_AGE_RECENT_HOURS = 0.01;
+const PHYSICS_AGE_OLD_DAYS = 10;
+const PHYSICS_TILT_FORCE = 0.044;
+const PHYSICS_TILT_SMOOTHING = 0.22;
+const PHYSICS_REST_THRESHOLD = 0.0008;
+const PHYSICS_MAX_VELOCITY = 0.55;
+const PHYSICS_THROW_MULTIPLIER = 0.032;
+const PHYSICS_THROW_FRICTION = 0.92;
+const PHYSICS_BOUNCE_FACTOR = 0.45;
+const PHYSICS_ROOM_BOUNDS = { minX: -8.5, maxX: 8.5, minZ: -5.8, maxZ: 5.4 };
+const PHYSICS_SEPARATION_RADIUS = 1.75;
+const PHYSICS_SEPARATION_FORCE = 0.03;
+const LONG_PRESS_MS = 0;
+const DRAG_DEAD_ZONE = 3;
+const DRAG_LERP = 0.55;
+const MOBILE_VISIBLE_X_RANGE = 5.2;
+const PHYSICS_FLOOR_Y = 0.02;
+const PHYSICS_AIR_GRAVITY = 0.018;
+const PHYSICS_VERTICAL_BOUNCE = 0.2;
+const PHYSICS_THROW_UPWARD = 0.14;
+const PHYSICS_DESK_EDGE_FALL_SPEED = -0.035;
+const PHYSICS_FLOOR_ROLL_FRICTION = 0.965;
+const DESK_SURFACE_SIDE_INSET = 0.08;
+const DESK_SURFACE_BACK_INSET = 0.08;
+const DESK_SURFACE_FRONT_INSET = 0.72;
+const DESK_OBSTACLE_EPSILON = 0.02;
+const VELOCITY_HISTORY_SIZE = 6;
+const IDB_DB_NAME = 'mind-room-db';
+const IDB_STORE_NAME = 'app-data';
+const IDB_DB_VERSION = 1;
+const GOOGLE_BROWSER_PROMPT_SESSION_KEY = 'mind-room-google-browser-prompt-dismissed-v1';
+const DUMMY_MEMO_SEED_COUNT = 30;
+const DUMMY_MEMO_SEED_VERSION = 'demo-seed-v1';
+
+const SILENCE_MS = 1800;
+const SPEECH_FINALIZE_GRACE_MS = 240;
 const RESTART_RECOGNITION_DELAY_MS = 35;
 const HYBRID_RECOGNITION_LANG = 'ko-KR';
 const CLUTTER_MERGE_DAYS = 5;
@@ -83,19 +112,19 @@ const CATEGORY_INFO = {
 };
 
 const ASSET_FILES = {
-  desk: 'desk.glb',
+  desk: 'desko.glb',
   note: 'note.glb',
   scribble: 'scribble_note.glb',
   clothesFolded: 'clothes_folded.glb',
-  clothesScattered: 'clothes_scattered.glb',
+  clothesScattered: 'clothes_scatteredo.glb',
   paperSingle: 'paper_single.glb',
   paperSingle2: 'paper_single2.glb',
-  paperPile: 'paper_pile.glb',
-  snack: 'snack.glb',
-  strawberry: 'strawberry.glb',
-  jar: 'jar.glb',
-  burn: 'burn.glb',
-  tumbler: 'tumbler.glb',
+  paperPile: 'paper_pileo.glb',
+  snack: 'snacko.glb',
+  strawberry: 'strawberryo.glb',
+  jar: 'jaro.glb',
+  burn: 'burno.glb',
+  tumbler: 'tumblero.glb',
 };
 
 const TARGET_MAX_DIMENSION = {
@@ -947,6 +976,8 @@ const UI = {
   appShell: document.getElementById('app'),
   sceneRoot: document.getElementById('scene-root'),
   permissionModal: document.getElementById('permission-modal'),
+  browserRecommendationModal: document.getElementById('browser-recommendation-modal'),
+  dismissBrowserRecommendationBtn: document.getElementById('dismiss-browser-recommendation'),
   allowMic: document.getElementById('allow-mic'),
   entryPanel: document.getElementById('entry-panel'),
   categoryGrid: document.getElementById('category-grid'),
@@ -966,201 +997,8 @@ const UI = {
   closeHistoryBtn: document.getElementById('close-history-btn'),
   historyPanel: document.getElementById('history-panel'),
   historyList: document.getElementById('history-list'),
-  memoDetailPanel: document.getElementById('memo-detail-panel'),
-  memoDetailLabel: document.getElementById('memo-detail-label'),
-  memoDetailText: document.getElementById('memo-detail-text'),
-  memoDetailDate: document.getElementById('memo-detail-date'),
-  memoDetailClear: document.getElementById('memo-detail-clear'),
-  memoDetailDelete: document.getElementById('memo-detail-delete'),
-  closeDetailBtn: document.getElementById('close-detail-btn'),
 };
 
-function buildHeavyDummyMemos(nowMs = Date.now()) {
-  const messages = {
-    clutter: [
-      '해야 할 말이 머릿속에서 계속 겹친다',
-      '지금 생각을 정리하지 않으면 더 산만해질 것 같다',
-      '괜히 다시 확인하고 싶은 장면이 남아 있다',
-      '방금 떠오른 아이디어를 놓치기 싫다',
-      '해야 할 일과 하고 싶은 일이 계속 엉킨다',
-      '기분은 애매한데 손은 계속 바쁘다',
-      '중요하지 않은 생각이 오히려 크게 남는다',
-      '메모하지 않으면 금방 흩어질 생각이다',
-      '자꾸 되새김질하게 되는 한 문장이 남아 있다',
-      '오늘 해야 할 것들이 한꺼번에 떠올랐다',
-    ],
-    routine: [
-      '책상 위를 다시 정리해야 한다',
-      '옷과 가방 위치를 정해두고 싶다',
-      '오늘은 정리 루틴을 지키고 싶다',
-      '자기 전 10분 정리를 루틴으로 만들자',
-      '아침 준비 순서를 다시 단순하게 만들자',
-      '정리한 상태를 오래 유지하고 싶다',
-      '보이는 곳부터 정리하면 마음도 덜 복잡할 것 같다',
-      '작은 정리라도 해두면 내일이 편해질 것 같다',
-      '습관처럼 다시 제자리로 돌려놓자',
-      '쌓이기 전에 조금씩 정리하자',
-    ],
-    record: [
-      '오늘 떠오른 문장을 저장해 둔다',
-      '다음 작업 전에 확인할 포인트를 적는다',
-      '이건 나중에 확장할 아이디어 메모다',
-      '바로 잊을 것 같아서 짧게 남겨둔다',
-      '이 감각은 나중에도 다시 보고 싶다',
-      '지금 화면 구성을 다시 참고할 것 같다',
-      '짧지만 지금 아니면 사라질 생각이다',
-      '나중에 다시 꺼내 볼 단서만 남겨둔다',
-      '오늘 흐름을 기억하려고 한 줄 적는다',
-      '작업하다 떠오른 포인트를 임시 저장한다',
-    ],
-    snack: [
-      '오늘은 끝까지 해보자',
-      '지금 흐름을 끊지 말자',
-      '조금만 더 집중해보자',
-      '중간에 포기하지 말자',
-      '다시 시작해도 된다',
-      '리듬만 유지하자',
-      '완벽하려고 하지 말고 계속 가자',
-      '하던 만큼만 더 밀어보자',
-      '멈추더라도 다시 붙으면 된다',
-      '한 번만 더 집중해서 마무리하자',
-    ],
-    emotion: [
-      '괜히 마음이 올라왔다',
-      '생각보다 덜 힘들었다',
-      '조용한 안정감이 남는다',
-      '순간적으로 서늘해졌다',
-      '기분이 생각보다 괜찮다',
-      '아직도 약간 걸리는 감정이 있다',
-      '한참 지난 감정인데 아직 잔상이 남아 있다',
-      '그때의 안도감이 뒤늦게 다시 떠올랐다',
-      '이제는 옅어졌지만 완전히 끝난 감정은 아니다',
-      '시간이 꽤 지났는데도 문득 다시 올라온다',
-      '별일 아닌데도 감정이 길게 남았다',
-      '갑자기 기분의 결이 바뀌는 순간이 있었다',
-    ],
-  };
-
-  const templates = [];
-  Object.entries(HEAVY_DUMMY_MEMO_COUNTS).forEach(([category, count]) => {
-    for (let index = 0; index < count; index += 1) {
-      templates.push({ category, index });
-    }
-  });
-
-  function getAgeMs(category, index) {
-    if (category === 'clutter') {
-      if (index < 6) return (3 + index * 7) * 60 * 60 * 1000;
-      if (index < 12) return (2 + (index - 6) * 0.45) * 24 * 60 * 60 * 1000;
-      return (32 + (index - 12) * 14) * 24 * 60 * 60 * 1000;
-    }
-
-    if (category === 'routine') {
-      if (index < 6) return (5 + index * 5) * 60 * 60 * 1000;
-      if (index < 12) return (1.25 + (index - 6) * 0.38) * 24 * 60 * 60 * 1000;
-      return (18 + (index - 12) * 9) * 24 * 60 * 60 * 1000;
-    }
-
-    if (category === 'record') {
-      if (index < 7) return (12 + index * 34) * 60 * 1000;
-      if (index < 13) return (1 + (index - 7) * 0.85) * 24 * 60 * 60 * 1000;
-      return (26 + (index - 13) * 19) * 24 * 60 * 60 * 1000;
-    }
-
-    if (category === 'snack') {
-      if (index < 8) return (15 + index * 170) * 60 * 1000;
-      if (index < 14) return (2 + (index - 8) * 0.8) * 24 * 60 * 60 * 1000;
-      return (12 + (index - 14) * 11) * 24 * 60 * 60 * 1000;
-    }
-
-    if (category === 'emotion') {
-      if (index < 7) return (2 + index * 9) * 60 * 60 * 1000;
-      if (index < 13) return (3 + (index - 7) * 0.65) * 24 * 60 * 60 * 1000;
-      return (14 + (index - 13) * 21) * 24 * 60 * 60 * 1000;
-    }
-
-    return (index + 1) * 60 * 60 * 1000;
-  }
-
-  return templates.map(({ category, index }, globalIndex) => {
-    const ageMs = getAgeMs(category, index);
-    const sampleList = messages[category] || ['테스트 메모'];
-    const sample = sampleList[index % sampleList.length];
-    const createdAt = new Date(nowMs - ageMs - globalIndex * 1700).toISOString();
-    const emotionTone = category === 'emotion'
-      ? (index % 3 === 0 || index % 3 === 2 ? 'good' : 'bad')
-      : null;
-
-    return {
-      id: `${DUMMY_MEMO_ID_PREFIX}-${category}-${String(index + 1).padStart(3, '0')}`,
-      category,
-      emotionTone,
-      transcript: `[더미 ${category} ${index + 1}] ${sample}`,
-      createdAt,
-      clearedAt: null,
-    };
-  });
-}
-
-function ensureHeavyDummyMemos() {
-  const previousCount = STATE.memos.length;
-  const previousDummyKeys = new Set(
-    STATE.memos
-      .filter((memo) => typeof memo?.id === 'string' && memo.id.startsWith('dummy-'))
-      .map((memo) => memo.id)
-  );
-
-  if (!ENABLE_HEAVY_DUMMY_MEMOS) {
-    const nonDummyMemos = STATE.memos.filter(
-      (memo) => !(typeof memo?.id === 'string' && memo.id.startsWith('dummy-'))
-    );
-    if (nonDummyMemos.length === STATE.memos.length) return 0;
-
-    STATE.memos = nonDummyMemos;
-
-    const nextLayoutCache = Object.create(null);
-    Object.entries(STATE.layoutCache || {}).forEach(([key, entry]) => {
-      if (typeof key === 'string' && (key.includes('dummy-') || key === 'clutter-old:shared')) return;
-      nextLayoutCache[key] = entry;
-    });
-    STATE.layoutCache = nextLayoutCache;
-
-    return Math.abs(previousCount - STATE.memos.length) || 1;
-  }
-
-  const desiredDummyMemos = buildHeavyDummyMemos();
-  const desiredIds = new Set(desiredDummyMemos.map((memo) => memo.id));
-
-  const nonDummyMemos = STATE.memos.filter(
-    (memo) => !(typeof memo?.id === 'string' && memo.id.startsWith('dummy-'))
-  );
-  STATE.memos = [...nonDummyMemos, ...desiredDummyMemos]
-    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-
-  let changed = STATE.memos.length !== previousCount;
-  if (!changed) {
-    if (previousDummyKeys.size !== desiredIds.size) changed = true;
-    else {
-      for (const id of previousDummyKeys) {
-        if (!desiredIds.has(id)) {
-          changed = true;
-          break;
-        }
-      }
-    }
-  }
-
-  if (!changed) return 0;
-
-  const nextLayoutCache = Object.create(null);
-  Object.entries(STATE.layoutCache || {}).forEach(([key, entry]) => {
-    if (typeof key === 'string' && (key.includes('dummy-') || key === 'clutter-old:shared')) return;
-    nextLayoutCache[key] = entry;
-  });
-  STATE.layoutCache = nextLayoutCache;
-
-  return Math.abs(STATE.memos.length - previousCount) || 1;
-}
 
 const STATE = {
   memos: [],
@@ -1187,7 +1025,6 @@ const STATE = {
   hoveredRoot: null,
   hoverDebounceTimer: null,
   hoverDebouncePendingRoot: null,
-  detailMemoIds: null,
   mixers: [],
   templates: {},
   visuals: [],
@@ -1208,9 +1045,21 @@ const STATE = {
   visualCheckElapsed: 0,
   pendingVisualRebuild: false,
   appReady: false,
+  browserRecommendationDismissed: false,
   loadingOverlay: null,
+  nonDeskAssetsReady: false,
+  remainingAssetLoadPromise: null,
+  deferredVisualRevealScheduled: false,
   playedEmotionRewardDropMemoIds: new Set(),
   layoutCache: Object.create(null),
+  /* physics & interaction */
+  tilt: { x: 0, z: 0, rawBeta: 0, rawGamma: 0, active: false },
+  grabbedVisual: null,
+  grabState: null, /* { startTime, startX, startY, pointerId, isDragging, velocityHistory, lastX, lastY, lastTime, liftY } */
+  longPressTimer: null,
+  physicsEnabled: true,
+  idbReady: false,
+  idbDatabase: null,
   easter: {
     overlayRoot: null,
     deleteStreakCount: 0,
@@ -1249,7 +1098,7 @@ const EASTER_ASSET_PATHS = Object.freeze({
   ra6: './assets/ra6.png',
 });
 const EASTER_DELETE_STREAK_WINDOW_MS = 4200;
-const EASTER_DELETE_STREAK_TRIGGER = 20;
+const EASTER_DELETE_STREAK_TRIGGER = 10;
 const EASTER_CREATION_DELAY_MS = 2000;
 const EASTER_SNACK_BATCH_SIZE = 5;
 const EASTER_EMOTION_BATCH_SIZE = 10;
@@ -1260,6 +1109,108 @@ const EASTER_RA4_COOLDOWN_MS = 12 * 60 * 1000;
 
 function isDummyMemo(memo) {
   return typeof memo?.id === 'string' && memo.id.startsWith('dummy-');
+}
+
+function cleanupLegacyDummyMemos() {
+  const previousCount = STATE.memos.length;
+  const filteredMemos = STATE.memos.filter((memo) => !isDummyMemo(memo));
+
+  if (filteredMemos.length === previousCount) return 0;
+
+  STATE.memos = filteredMemos;
+
+  const nextLayoutCache = Object.create(null);
+  Object.entries(STATE.layoutCache || {}).forEach(([key, entry]) => {
+    if (typeof key === 'string' && (key.includes('dummy-') || key === 'clutter-old:shared')) return;
+    nextLayoutCache[key] = entry;
+  });
+  STATE.layoutCache = nextLayoutCache;
+
+  return previousCount - filteredMemos.length;
+}
+
+
+function createSeedDummyMemos(count = DUMMY_MEMO_SEED_COUNT, nowMs = Date.now()) {
+  const timelineDays = [
+    0.08, 0.18, 0.35, 0.6, 0.9,
+    1.2, 1.8, 2.4, 2.9, 3.2,
+    3.8, 4.4, 4.9, 5.4, 6.1,
+    6.8, 7.3, 8.2, 9.5, 11,
+    12.5, 14, 16, 18, 20,
+    24, 28, 32, 38, 45,
+  ];
+  const categoryCycle = [
+    'emotion', 'record', 'clutter', 'routine', 'snack',
+    'emotion', 'record', 'clutter', 'routine', 'snack',
+  ];
+  const transcriptPool = {
+    emotion: [
+      '오늘은 기분이 가벼워서 방 안이 조금 밝게 느껴졌어.',
+      '조금 예민하지만 그래도 정리해보려는 마음은 있어.',
+      '애매하게 마음이 흔들렸는데 일단 기록해둘래.',
+      '생각보다 괜찮았고 다시 해볼 힘이 조금 생겼어.',
+      '감정이 묘하게 남아서 눈에 보이게 두고 싶었어.',
+      '괜히 울컥했지만 금방 지나가길 바라면서 남겨둠.',
+    ],
+    record: [
+      '오늘 작업 아이디어 하나를 급하게 메모해뒀어.',
+      '수업 듣다가 떠오른 구조를 짧게 적어뒀어.',
+      '앱 수정 포인트를 잊기 전에 남겨놓음.',
+      '나중에 다시 볼 만한 생각이라 기록해둠.',
+      '사소하지만 중요한 디테일이라서 써둠.',
+      '해야 할 작업 흐름을 간단히 정리해봤어.',
+    ],
+    clutter: [
+      '머릿속이 복잡해서 잡생각을 바닥에 던져놓는 느낌.',
+      '괜히 계속 맴도는 생각이라 흩뿌려두고 싶었어.',
+      '정리 안 된 불안이 조금 남아 있었어.',
+      '쓸데없는 생각인데도 자꾸 돌아와서 남김.',
+      '지워버리고 싶지만 일단 눈에 보이게 내려놓음.',
+      '복잡한 마음을 종이처럼 던져두는 기분이었어.',
+    ],
+    routine: [
+      '생활 리듬을 다시 잡아보려고 정리 메모를 남김.',
+      '작은 루틴 하나라도 붙잡고 싶어서 기록했어.',
+      '오늘은 정돈된 상태를 조금 유지하고 싶었어.',
+      '흐트러진 패턴을 다시 세우려는 마음으로 남김.',
+      '내일을 위해 정리해야 할 일을 적어둠.',
+      '생활 흐름을 다시 맞춰보려는 체크포인트야.',
+    ],
+    snack: [
+      '이번엔 진짜 해보겠다는 다짐을 하나 남겨둠.',
+      '작게라도 꾸준히 가보자는 마음이 들었어.',
+      '다시 시작하자는 의미로 남겨둔 다짐이야.',
+      '미루지 않겠다는 마음을 눈에 보이게 두고 싶었어.',
+      '작업을 끝까지 끌고 가보자는 다짐이야.',
+      '흔들려도 계속 가보자는 쪽으로 마음을 정리했어.',
+    ],
+  };
+
+  const memos = [];
+  for (let i = 0; i < count; i += 1) {
+    const category = categoryCycle[i % categoryCycle.length];
+    const pool = transcriptPool[category] || ['테스트 메모'];
+    const transcript = pool[i % pool.length];
+    const ageDays = timelineDays[i % timelineDays.length] + Math.floor(i / timelineDays.length) * 7;
+    const createdAt = new Date(nowMs - ageDays * 24 * 60 * 60 * 1000).toISOString();
+    memos.push({
+      id: `${DUMMY_MEMO_SEED_VERSION}-${String(i + 1).padStart(2, '0')}`,
+      category,
+      emotionTone: category === 'emotion' ? (i % 2 === 0 ? 'good' : 'bad') : null,
+      transcript,
+      createdAt,
+      clearedAt: null,
+    });
+  }
+
+  return memos.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+}
+
+function seedDummyMemosIfNeeded() {
+  if (STATE.memos.length > 0) return false;
+  STATE.memos = createSeedDummyMemos();
+  STATE.layoutCache = Object.create(null);
+  return true;
 }
 
 function loadEasterState() {
@@ -1626,31 +1577,146 @@ function setupButtonSoundUI() {
 }
 
 
+
+function getViewportSize() {
+  const vv = window.visualViewport;
+  if (
+    vv &&
+    Number.isFinite(vv.width) &&
+    Number.isFinite(vv.height) &&
+    vv.width > 0 &&
+    vv.height > 0
+  ) {
+    return {
+      width: Math.round(vv.width),
+      height: Math.round(vv.height),
+    };
+  }
+
+  return {
+    width: window.innerWidth || document.documentElement.clientWidth || 1,
+    height: window.innerHeight || document.documentElement.clientHeight || 1,
+  };
+}
+
+function syncAppViewportHeight() {
+  const { height } = getViewportSize();
+  document.documentElement.style.setProperty('--app-vh', `${height}px`);
+}
+
+
+function isMobileGoogleInAppBrowser() {
+  const ua = navigator.userAgent || '';
+  const referrer = document.referrer || '';
+  const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+  if (!isMobile) return false;
+
+  const hasGoogleSearchAppToken = /\bGSA\/\d/i.test(ua) || /GoogleApp|GoogleSearchApp/i.test(ua);
+  const hasGoogleAppReferrer = /googlequicksearchbox/i.test(referrer);
+  const isAndroidWebView = /;\s*wv\)/i.test(ua) || /\bwv\b/i.test(ua);
+
+  return hasGoogleSearchAppToken || hasGoogleAppReferrer || (isAndroidWebView && hasGoogleAppReferrer);
+}
+
+function markBrowserRecommendationDismissed() {
+  STATE.browserRecommendationDismissed = true;
+  try {
+    sessionStorage.setItem(GOOGLE_BROWSER_PROMPT_SESSION_KEY, '1');
+  } catch (error) {
+    console.warn('Browser recommendation session storage unavailable:', error);
+  }
+}
+
+function shouldShowBrowserRecommendationPrompt() {
+  if (!UI.browserRecommendationModal) return false;
+  if (!isMobileGoogleInAppBrowser()) return false;
+  if (STATE.browserRecommendationDismissed) return false;
+
+  try {
+    if (sessionStorage.getItem(GOOGLE_BROWSER_PROMPT_SESSION_KEY) === '1') {
+      STATE.browserRecommendationDismissed = true;
+      return false;
+    }
+  } catch (error) {
+    console.warn('Browser recommendation session storage read failed:', error);
+  }
+
+  return true;
+}
+
+function showBrowserRecommendationPrompt() {
+  if (!shouldShowBrowserRecommendationPrompt()) return;
+  UI.browserRecommendationModal.classList.add('visible');
+}
+
+function hideBrowserRecommendationPrompt() {
+  if (!UI.browserRecommendationModal) return;
+  UI.browserRecommendationModal.classList.remove('visible');
+  markBrowserRecommendationDismissed();
+}
+
+
 init();
 
 async function init() {
-  loadStorage();
-  loadEasterState();
-  setupButtonSoundUI();
-  ensureEasterOverlayRoot();
-  const addedDummyMemoCount = ensureHeavyDummyMemos();
-  if (addedDummyMemoCount > 0) persistStorage();
-  seedPlayedEmotionRewardDropsFromExistingMemos();
-  setupUI();
-  renderCategoryChips();
-  syncSelectionUI();
-  setupScene();
-  await loadAssets();
-  buildDeskAndDecor();
-  rebuildVisuals();
-  renderHistory();
-  maybeTriggerReloadRa3();
-  startLoop();
-  STATE.appReady = true;
-  hideLoadingOverlay();
+  try {
+    await openIDB();
+    await loadStorage();
+    loadEasterState();
+    setupButtonSoundUI();
+    ensureEasterOverlayRoot();
+    const removedLegacyDummyMemoCount = cleanupLegacyDummyMemos();
+    if (removedLegacyDummyMemoCount > 0) persistStorage();
+    const didSeedDummyMemos = seedDummyMemosIfNeeded();
+    if (didSeedDummyMemos) persistStorage();
+    seedPlayedEmotionRewardDropsFromExistingMemos();
+    setupUI();
+    renderCategoryChips();
+    syncSelectionUI();
+    syncAppViewportHeight();
+    showBrowserRecommendationPrompt();
+    setupScene();
+
+    if (shouldUseDeskFirstLoading()) {
+      await loadDeskAsset();
+      buildDeskAndDecor();
+      setupDeviceOrientation();
+      setupInteraction();
+      maybeTriggerReloadRa3();
+      startLoop();
+      STATE.appReady = true;
+      hideLoadingOverlay();
+      renderHistory();
+
+      scheduleDeferredTask(() => {
+        void loadRemainingAssetsInBackground();
+      }, 800);
+      return;
+    }
+
+    await loadAssets();
+    buildDeskAndDecor();
+    rebuildVisuals();
+    renderHistory();
+    setupDeviceOrientation();
+    setupInteraction();
+    maybeTriggerReloadRa3();
+    startLoop();
+    STATE.appReady = true;
+    hideLoadingOverlay();
+  } catch (error) {
+    console.error('App init failed:', error);
+    hideLoadingOverlay();
+  }
 }
 
 function setupUI() {
+  if (UI.dismissBrowserRecommendationBtn) {
+    UI.dismissBrowserRecommendationBtn.addEventListener('click', () => {
+      hideBrowserRecommendationPrompt();
+    });
+  }
+
   UI.allowMic.addEventListener('click', async () => {
     const ok = await requestMicrophonePermission();
     if (!ok) return;
@@ -1713,11 +1779,6 @@ function setupUI() {
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
 
-    if (STATE.detailMemoIds) {
-      closeDetailPanel();
-      return;
-    }
-
     if (!UI.historyPanel.classList.contains('hidden')) {
       closeHistoryPanel();
       hideMemoHover();
@@ -1732,27 +1793,14 @@ function setupUI() {
 
   createLoadingOverlay();
   window.addEventListener('resize', onResize);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', onResize);
+    window.visualViewport.addEventListener('scroll', onResize);
+  }
+  window.addEventListener('orientationchange', onResize);
   window.addEventListener('pointermove', onPointerMove);
   window.addEventListener('pointerleave', hideMemoHover);
   UI.sceneRoot.addEventListener('pointerleave', hideMemoHover);
-
-  UI.sceneRoot.addEventListener('pointerdown', onScenePointerDown);
-
-  if (UI.closeDetailBtn) {
-    UI.closeDetailBtn.addEventListener('click', () => { closeDetailPanel(); });
-  }
-  if (UI.memoDetailClear) {
-    UI.memoDetailClear.addEventListener('click', () => {
-      if (!STATE.detailMemoIds || !STATE.detailMemoIds.length) return;
-      STATE.detailMemoIds.forEach((id) => clearMemo(id));
-      closeDetailPanel();
-    });
-  }
-  if (UI.memoDetailDelete) {
-    UI.memoDetailDelete.hidden = true;
-    UI.memoDetailDelete.disabled = true;
-    UI.memoDetailDelete.setAttribute('aria-hidden', 'true');
-  }
 }
 
 function openEntryPanel() {
@@ -2122,11 +2170,18 @@ function createMemoFromTranscript(transcript) {
 
   snapshotLiveVisualTransformsToLayoutCache();
   STATE.memos.unshift(memo);
-  const handledIncrementally = createAndAttachVisualForMemo(memo, memo.id);
-  persistStorage();
-  if (!handledIncrementally) {
-    rebuildVisuals(memo.id);
+
+  if (STATE.nonDeskAssetsReady) {
+    const handledIncrementally = createAndAttachVisualForMemo(memo, memo.id);
+    persistStorage();
+    if (!handledIncrementally) {
+      rebuildVisuals(memo.id);
+    }
+  } else {
+    persistStorage();
+    void loadRemainingAssetsInBackground();
   }
+
   renderHistory();
   resetDeleteStreak();
   maybeTriggerCreationEasters(memo);
@@ -2160,8 +2215,7 @@ function updateRoomCopy(memo) {
 }
 
 function setupScene() {
-  const width = UI.sceneRoot.clientWidth || window.innerWidth;
-  const height = UI.sceneRoot.clientHeight || window.innerHeight;
+  const { width, height } = getViewportSize();
   const isMobile = width < 768;
 
   const roomColor = 0xf6f1eb;
@@ -2170,18 +2224,18 @@ function setupScene() {
   STATE.scene.background = new THREE.Color(roomColor);
   STATE.scene.fog = new THREE.FogExp2(roomColor, 0.0018);
 
-  const fov = isMobile ? 54 : 43;
-  STATE.camera = new THREE.PerspectiveCamera(fov, width / height, 0.1, 100);
+  const fov = isMobile ? 50 : 43;
+  STATE.camera = new THREE.PerspectiveCamera(fov, width / Math.max(height, 1), 0.1, 100);
   if (isMobile) {
-    STATE.camera.position.set(-0.2, 7.6, 14.5);
-    STATE.camera.lookAt(-0.2, 0.6, -2.2);
+    STATE.camera.position.set(-0.2, 7.2, 13.2);
+    STATE.camera.lookAt(-0.2, 1.0, -2.2);
   } else {
     STATE.camera.position.set(-0.55, 5.1, 11.6);
     STATE.camera.lookAt(-0.55, 1.35, -2.35);
   }
 
-  STATE.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-  STATE.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.8));
+  STATE.renderer = new THREE.WebGLRenderer({ antialias: !isMobile, alpha: false, powerPreference: 'high-performance' });
+  STATE.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 1.8));
   STATE.renderer.setSize(width, height);
   STATE.renderer.outputColorSpace = THREE.SRGBColorSpace;
   STATE.renderer.shadowMap.enabled = true;
@@ -2193,10 +2247,11 @@ function setupScene() {
   const hemi = new THREE.HemisphereLight(0xfffbf4, 0xe9dfd3, 1.7);
   STATE.scene.add(hemi);
 
+  const shadowMapRes = isMobile ? 1024 : 2048;
   const key = new THREE.DirectionalLight(0xffe2c6, 1.9);
   key.position.set(5.6, 9.5, 6.4);
   key.castShadow = true;
-  key.shadow.mapSize.set(2048, 2048);
+  key.shadow.mapSize.set(shadowMapRes, shadowMapRes);
   key.shadow.camera.left = -14;
   key.shadow.camera.right = 14;
   key.shadow.camera.top = 12;
@@ -2267,25 +2322,158 @@ function buildRoomShell() {
   group.add(wallGlow);
 }
 
-async function loadAssets() {
-  const loader = new GLTFLoader();
-
-  STATE.templates.note = await loadTemplate(loader, 'note', ASSET_FILES.note, createNoteFallback);
-  STATE.templates.scribble = await loadTemplate(loader, 'scribble', ASSET_FILES.scribble, createScribbleFallback);
-  STATE.templates.clothesFolded = await loadTemplate(loader, 'clothesFolded', ASSET_FILES.clothesFolded, createClothesFoldedFallback);
-  STATE.templates.clothesScattered = await loadTemplate(loader, 'clothesScattered', ASSET_FILES.clothesScattered, createClothesScatteredFallback);
-  STATE.templates.paperSingle = await loadTemplate(loader, 'paperSingle', ASSET_FILES.paperSingle, () => createPaperFallback(0xe5dacb));
-  STATE.templates.paperSingle2 = await loadTemplate(loader, 'paperSingle2', ASSET_FILES.paperSingle2, () => createPaperFallback(0xd9d0e2));
-  STATE.templates.paperPile = await loadTemplate(loader, 'paperPile', ASSET_FILES.paperPile, createPaperPileFallback);
-  STATE.templates.snack = await loadTemplate(loader, 'snack', ASSET_FILES.snack, createSnackFallback);
-  STATE.templates.strawberry = await loadTemplate(loader, 'strawberry', ASSET_FILES.strawberry, createStrawberryFallback);
-  STATE.templates.jar = await loadTemplate(loader, 'jar', ASSET_FILES.jar, createJarFallback);
-  STATE.templates.burn = await loadTemplate(loader, 'burn', ASSET_FILES.burn, createBurnFallback);
-  STATE.templates.tumbler = await loadTemplate(loader, 'tumbler', ASSET_FILES.tumbler, createTumblerFallback);
-  STATE.templates.desk = await loadTemplate(loader, 'desk', ASSET_FILES.desk, createDeskFallback);
+function getTemplateEntries() {
+  return [
+    ['note', ASSET_FILES.note, createNoteFallback],
+    ['scribble', ASSET_FILES.scribble, createScribbleFallback],
+    ['clothesFolded', ASSET_FILES.clothesFolded, createClothesFoldedFallback],
+    ['clothesScattered', ASSET_FILES.clothesScattered, createClothesScatteredFallback],
+    ['paperSingle', ASSET_FILES.paperSingle, () => createPaperFallback(0xe5dacb)],
+    ['paperSingle2', ASSET_FILES.paperSingle2, () => createPaperFallback(0xd9d0e2)],
+    ['paperPile', ASSET_FILES.paperPile, createPaperPileFallback],
+    ['snack', ASSET_FILES.snack, createSnackFallback],
+    ['strawberry', ASSET_FILES.strawberry, createStrawberryFallback],
+    ['jar', ASSET_FILES.jar, createJarFallback],
+    ['burn', ASSET_FILES.burn, createBurnFallback],
+    ['tumbler', ASSET_FILES.tumbler, createTumblerFallback],
+    ['desk', ASSET_FILES.desk, createDeskFallback],
+  ];
 }
 
-async function loadTemplate(loader, key, filename, fallbackFactory) {
+function shouldUseDeskFirstLoading() {
+  return true;
+}
+
+function scheduleDeferredTask(task, timeout = 1200) {
+  if (typeof task !== 'function') return null;
+
+  if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+    return window.requestIdleCallback(() => {
+      try {
+        task();
+      } catch (error) {
+        console.warn('Deferred task failed.', error);
+      }
+    }, { timeout });
+  }
+
+  return window.setTimeout(() => {
+    try {
+      task();
+    } catch (error) {
+      console.warn('Deferred task failed.', error);
+    }
+  }, Math.min(timeout, 160));
+}
+
+function scheduleDeferredVisualReveal() {
+  if (STATE.deferredVisualRevealScheduled) return;
+  STATE.deferredVisualRevealScheduled = true;
+
+  const reveal = () => {
+    STATE.deferredVisualRevealScheduled = false;
+    STATE.pendingVisualRebuild = true;
+    STATE.lastVisualSignature = '';
+  };
+
+  const scheduleReveal = () => scheduleDeferredTask(reveal, 1800);
+
+  if (typeof document !== 'undefined' && document.hidden) {
+    const onVisible = () => {
+      if (document.hidden) return;
+      document.removeEventListener('visibilitychange', onVisible);
+      scheduleReveal();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return;
+  }
+
+  scheduleReveal();
+}
+
+function getTemplateEntryByKey(key) {
+  return getTemplateEntries().find(([entryKey]) => entryKey === key) || null;
+}
+
+function ensureDeferredFallbackTemplate(key) {
+  return STATE.templates[key] || null;
+}
+
+function finalizeTemplateRoot(root, key) {
+  normalizeTemplate(root, key);
+  applyShadowSettings(root);
+  return {
+    key,
+    root,
+    animations: root.animations || [],
+  };
+}
+
+function createFallbackTemplate(key, fallbackFactory) {
+  const root = fallbackFactory();
+  root.animations = [];
+  return finalizeTemplateRoot(root, key);
+}
+
+async function loadTemplateEntries(loader, entries) {
+  const results = await Promise.all(
+    entries.map(([key, filename, fallback]) => loadTemplate(loader, key, filename, fallback))
+  );
+
+  entries.forEach(([key], index) => {
+    STATE.templates[key] = results[index];
+  });
+}
+
+async function loadTemplateEntriesSequentially(loader, entries) {
+  for (const [key, filename, fallback] of entries) {
+    STATE.templates[key] = await loadTemplate(loader, key, filename, fallback);
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+  }
+}
+
+async function loadDeskAsset() {
+  const loader = new GLTFLoader();
+  const deskEntry = getTemplateEntries().filter(([key]) => key === 'desk');
+  await loadTemplateEntries(loader, deskEntry);
+}
+
+async function loadRemainingAssetsInBackground() {
+  if (STATE.nonDeskAssetsReady) return;
+  if (STATE.remainingAssetLoadPromise) return STATE.remainingAssetLoadPromise;
+
+  const loader = new GLTFLoader();
+  const deferredEntries = getTemplateEntries().filter(([key]) => key !== 'desk');
+
+  STATE.remainingAssetLoadPromise = (async () => {
+    for (const [key, filename, fallback] of deferredEntries) {
+      if (STATE.templates[key]) continue;
+      STATE.templates[key] = await loadTemplate(loader, key, filename, fallback, { allowFallback: false });
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    }
+
+    STATE.nonDeskAssetsReady = true;
+    scheduleDeferredVisualReveal();
+  })()
+    .catch((error) => {
+      console.warn('Deferred asset loading failed. Non-desk visuals will stay hidden until every GLB is loaded.', error);
+      throw error;
+    })
+    .finally(() => {
+      STATE.remainingAssetLoadPromise = null;
+    });
+
+  return STATE.remainingAssetLoadPromise;
+}
+
+async function loadAssets() {
+  const loader = new GLTFLoader();
+  await loadTemplateEntries(loader, getTemplateEntries());
+  STATE.nonDeskAssetsReady = true;
+}
+
+async function loadTemplate(loader, key, filename, fallbackFactory, options = {}) {
+  const { allowFallback = true } = options;
   let root;
 
   try {
@@ -2293,19 +2481,15 @@ async function loadTemplate(loader, key, filename, fallbackFactory) {
     root = gltf.scene;
     root.animations = gltf.animations || [];
   } catch (error) {
+    if (!allowFallback) {
+      throw error;
+    }
     console.warn(`Failed to load ${filename}. Using fallback.`, error);
     root = fallbackFactory();
     root.animations = [];
   }
 
-  normalizeTemplate(root, key);
-  applyShadowSettings(root);
-
-  return {
-    key,
-    root,
-    animations: root.animations || [],
-  };
+  return finalizeTemplateRoot(root, key);
 }
 
 function normalizeTemplate(root, key) {
@@ -2442,7 +2626,7 @@ function analyzeDeskSurface() {
     for (let iz = 0; iz < stepsZ; iz += 1) {
       const x = THREE.MathUtils.lerp(box.min.x + padX, box.max.x - padX, ix / Math.max(stepsX - 1, 1));
       const z = THREE.MathUtils.lerp(box.min.z + padZ, box.max.z - padZ, iz / Math.max(stepsZ - 1, 1));
-      DESK_RAYCASTER.set(new THREE.Vector3(x, originY, z), new THREE.Vector3(0, -1, 0));
+      DESK_RAYCASTER.set(_RAYCAST_ORIGIN.set(x, originY, z), _RAYCAST_DOWN_DIR);
       const hits = DESK_RAYCASTER.intersectObjects(meshes, false);
       const hit = hits.find((entry) => {
         const worldNormal = getWorldUpNormal(entry);
@@ -2496,6 +2680,9 @@ function analyzeDeskSurface() {
   };
 }
 
+const _RAYCAST_DOWN_DIR = new THREE.Vector3(0, -1, 0);
+const _RAYCAST_ORIGIN = new THREE.Vector3();
+
 function findClosestHorizontalSurfacePoint(meshes, bounds, targetY, tolerance, x, z, options = {}) {
   if (!meshes?.length || !bounds) return null;
 
@@ -2513,7 +2700,8 @@ function findClosestHorizontalSurfacePoint(meshes, bounds, targetY, tolerance, x
     for (let iz = -steps; iz <= steps; iz += 1) {
       const sampleX = x + ((steps ? ix / steps : 0) * searchRadius);
       const sampleZ = z + ((steps ? iz / steps : 0) * searchRadius);
-      DESK_RAYCASTER.set(new THREE.Vector3(sampleX, originY, sampleZ), new THREE.Vector3(0, -1, 0));
+      _RAYCAST_ORIGIN.set(sampleX, originY, sampleZ);
+      DESK_RAYCASTER.set(_RAYCAST_ORIGIN, _RAYCAST_DOWN_DIR);
       const hits = DESK_RAYCASTER.intersectObjects(meshes, false);
 
       hits.forEach((hit) => {
@@ -2575,7 +2763,7 @@ function analyzeChairSeatSurface() {
     for (let iz = 0; iz < stepsZ; iz += 1) {
       const x = THREE.MathUtils.lerp(minX, maxX, ix / Math.max(stepsX - 1, 1));
       const z = THREE.MathUtils.lerp(minZ, maxZ, iz / Math.max(stepsZ - 1, 1));
-      DESK_RAYCASTER.set(new THREE.Vector3(x, originY, z), new THREE.Vector3(0, -1, 0));
+      DESK_RAYCASTER.set(_RAYCAST_ORIGIN.set(x, originY, z), _RAYCAST_DOWN_DIR);
       const hits = DESK_RAYCASTER.intersectObjects(deskMeshes, false);
       const hit = hits.find((entry) => {
         const worldNormal = getWorldUpNormal(entry);
@@ -2784,16 +2972,16 @@ function syncHoverProxyBounds(proxy, owner) {
   proxy.updateMatrixWorld(true);
 }
 
+const SHARED_HOVER_PROXY_GEO = new THREE.BoxGeometry(1, 1, 1);
+const SHARED_HOVER_PROXY_MAT = new THREE.MeshBasicMaterial({
+  transparent: true,
+  opacity: 0,
+  depthWrite: false,
+  colorWrite: false,
+});
+
 function createMemoHoverProxy(object) {
-  const proxy = new THREE.Mesh(
-    new THREE.BoxGeometry(1, 1, 1),
-    new THREE.MeshBasicMaterial({
-      transparent: true,
-      opacity: 0,
-      depthWrite: false,
-      colorWrite: false,
-    }),
-  );
+  const proxy = new THREE.Mesh(SHARED_HOVER_PROXY_GEO, SHARED_HOVER_PROXY_MAT);
 
   proxy.userData.memoVisual = true;
   proxy.userData.hoverOwner = object;
@@ -2888,9 +3076,12 @@ function buildStaticDecor() {
 
 function createAssetInstance(key) {
   const template = STATE.templates[key];
+  if (!template) {
+    throw new Error(`Missing asset template: ${key}`);
+  }
   const root = template.animations.length ? cloneSkeleton(template.root) : template.root.clone(true);
   root.userData.assetKey = key;
-  applyShadowSettings(root);
+  /* Shadow settings are inherited from the template — no need to re-traverse */
 
   let mixer = null;
   let action = null;
@@ -3397,6 +3588,12 @@ function buildActiveLayoutKeys({ records, clutterFresh, clutterOld, routines, sn
 function rebuildVisuals(animateMemoId = null) {
   snapshotLiveVisualTransformsToLayoutCache();
   disposeVisuals();
+
+  if (shouldUseDeskFirstLoading() && !STATE.nonDeskAssetsReady) {
+    updateCounts();
+    STATE.lastVisualSignature = buildVisualSignature();
+    return;
+  }
 
   const activeMemos = STATE.memos.filter((memo) => !memo.clearedAt);
   const now = Date.now();
@@ -4310,8 +4507,7 @@ function disposeVisuals() {
 
     if (visual.hoverProxy) {
       STATE.scene.remove(visual.hoverProxy);
-      visual.hoverProxy.geometry?.dispose?.();
-      visual.hoverProxy.material?.dispose?.();
+      /* shared geometry/material — do NOT dispose */
     }
 
     STATE.scene.remove(visual.object);
@@ -4336,8 +4532,7 @@ function disposeSingleVisual(visual) {
 
   if (visual.hoverProxy) {
     STATE.scene.remove(visual.hoverProxy);
-    visual.hoverProxy.geometry?.dispose?.();
-    visual.hoverProxy.material?.dispose?.();
+    /* shared geometry/material — do NOT dispose */
   }
 
   STATE.scene.remove(visual.object);
@@ -5240,6 +5435,17 @@ function renderHistory() {
     button.addEventListener('click', () => deleteMemo(button.dataset.deleteId));
   });
 
+  /* Export / Import buttons */
+  const backupWrap = document.createElement('div');
+  backupWrap.className = 'backup-actions';
+  backupWrap.innerHTML = `
+    <button type="button" class="log-btn backup-btn" id="export-btn">내보내기</button>
+    <button type="button" class="log-btn backup-btn" id="import-btn">가져오기</button>
+  `;
+  UI.historyList.appendChild(backupWrap);
+  document.getElementById('export-btn')?.addEventListener('click', exportMemosJSON);
+  document.getElementById('import-btn')?.addEventListener('click', importMemosJSON);
+
   updateCounts();
 }
 
@@ -5351,6 +5557,7 @@ function startLoop() {
 
     STATE.mixers.forEach((mixer) => mixer.update(delta));
     updateCamera(delta);
+    updatePhysics(delta);
 
     STATE.visuals = STATE.visuals.filter((visual) => {
       if (visual.kind === 'particles') {
@@ -5366,7 +5573,16 @@ function startLoop() {
 
     STATE.visuals.forEach((visual) => {
       if (visual.kind !== 'asset' || !visual.hoverProxy || !visual.object) return;
-      syncHoverProxyBounds(visual.hoverProxy, visual.object);
+      /* Auto-init physics for newly created visuals */
+      if (!visual.phys) {
+        initVisualPhysics(visual);
+        syncHoverProxyBounds(visual.hoverProxy, visual.object);
+        return;
+      }
+      /* Only re-sync bounds when the object is actually moving */
+      if (visual.dropIntro || !visual.phys.settled) {
+        syncHoverProxyBounds(visual.hoverProxy, visual.object);
+      }
     });
 
     if (STATE.pendingVisualRebuild) {
@@ -5395,30 +5611,29 @@ function startLoop() {
 }
 
 function buildVisualSignature() {
-  return STATE.memos
-    .map((memo) => {
-      if (memo.clearedAt) return `${memo.id}:cleared`;
-      const ageDays = getAgeDays(memo.createdAt, Date.now());
-
-      if (memo.category === 'emotion') {
-        return `${memo.id}:emotion-${getEmotionDecayAssetKey(memo, Date.now())}`;
-      }
-
-      if (memo.category === 'clutter') return `${memo.id}:clutter-${ageDays >= CLUTTER_MERGE_DAYS ? 'old' : 'fresh'}`;
-      if (memo.category === 'routine') return `${memo.id}:routine-${ageDays >= ROUTINE_SCATTER_DAYS ? 'scattered' : 'folded'}`;
-      return `${memo.id}:active`;
-    })
-    .join('|');
+  const nowMs = Date.now();
+  let sig = '';
+  for (let i = 0; i < STATE.memos.length; i++) {
+    const memo = STATE.memos[i];
+    if (i > 0) sig += '|';
+    if (memo.clearedAt) { sig += memo.id; sig += ':cleared'; continue; }
+    const ageDays = getAgeDays(memo.createdAt, nowMs);
+    if (memo.category === 'emotion') { sig += memo.id; sig += ':emotion-'; sig += getEmotionDecayAssetKey(memo, nowMs); continue; }
+    if (memo.category === 'clutter') { sig += memo.id; sig += ageDays >= CLUTTER_MERGE_DAYS ? ':clutter-old' : ':clutter-fresh'; continue; }
+    if (memo.category === 'routine') { sig += memo.id; sig += ageDays >= ROUTINE_SCATTER_DAYS ? ':routine-scattered' : ':routine-folded'; continue; }
+    sig += memo.id; sig += ':active';
+  }
+  return sig;
 }
 
 function updateCamera(delta) {
   const isMobile = (window.innerWidth || 768) < 768;
   if (isMobile) {
     const baseX = -0.2;
-    const baseY = 7.6;
+    const baseY = 7.2;
     STATE.camera.position.x = THREE.MathUtils.lerp(STATE.camera.position.x, baseX + STATE.pointer.x * 0.1, delta * 1.2);
     STATE.camera.position.y = THREE.MathUtils.lerp(STATE.camera.position.y, baseY + STATE.pointer.y * 0.05, delta * 1.2);
-    STATE.camera.lookAt(-0.2, 0.6, -2.2);
+    STATE.camera.lookAt(-0.2, 1.0, -2.2);
   } else {
     const targetX = -0.55 + STATE.pointer.x * 0.22;
     const targetY = 5.1 + STATE.pointer.y * 0.12;
@@ -5430,15 +5645,16 @@ function updateCamera(delta) {
 
 function onResize() {
   if (!STATE.camera || !STATE.renderer) return;
-  const width = UI.sceneRoot.clientWidth || window.innerWidth;
-  const height = UI.sceneRoot.clientHeight || window.innerHeight;
+  syncAppViewportHeight();
+  const { width, height } = getViewportSize();
   const isMobile = width < 768;
-  STATE.camera.fov = isMobile ? 54 : 43;
-  STATE.camera.aspect = width / height;
+  STATE.camera.fov = isMobile ? 50 : 43;
+  STATE.camera.aspect = width / Math.max(height, 1);
   STATE.camera.updateProjectionMatrix();
-  STATE.renderer.setSize(width, height);
+  STATE.renderer.setSize(width, height, false);
   if (isMobile) {
-    STATE.camera.position.set(-0.2, 7.6, 14.5);
+    STATE.camera.position.set(-0.2, 7.2, 13.2);
+    STATE.camera.lookAt(-0.2, 1.0, -2.2);
   }
 }
 
@@ -5451,79 +5667,8 @@ function onPointerMove(event) {
   STATE.pointerClient.y = event.clientY;
 }
 
-function onScenePointerDown(event) {
-  if (!STATE.camera || !STATE.renderer) return;
-  if (STATE.detailMemoIds) { closeDetailPanel(); return; }
-  if (!UI.entryPanel.classList.contains('hidden') || !UI.historyPanel.classList.contains('hidden')) return;
-
-  const rect = STATE.renderer.domElement.getBoundingClientRect();
-  const px = (((event.clientX - rect.left) / rect.width) * 2) - 1;
-  const py = -(((event.clientY - rect.top) / rect.height) * 2) + 1;
-  const clickPointer = new THREE.Vector2(px, py);
-
-  const clickRaycaster = new THREE.Raycaster();
-  clickRaycaster.setFromCamera(clickPointer, STATE.camera);
-
-  const interactiveRoots = [];
-  STATE.visuals.forEach((visual) => {
-    if (visual.kind !== 'asset') return;
-    if (visual.hoverProxy) interactiveRoots.push(visual.hoverProxy);
-    else if (visual.object) interactiveRoots.push(visual.object);
-  });
-
-  const hits = clickRaycaster.intersectObjects(interactiveRoots, true);
-  const firstMemoHit = hits.find((hit) => findMemoHoverRoot(hit.object));
-  if (!firstMemoHit) return;
-
-  const root = findMemoHoverRoot(firstMemoHit.object);
-  if (!root || !root.userData.memoIds || !root.userData.memoIds.length) return;
-
-  hideMemoHover();
-  openDetailPanel(root.userData.memoIds);
-}
-
-function openDetailPanel(memoIds) {
-  if (!UI.memoDetailPanel || !memoIds || !memoIds.length) return;
-
-  STATE.detailMemoIds = [...memoIds];
-  const memos = memoIds
-    .map((id) => STATE.memos.find((m) => m.id === id))
-    .filter(Boolean);
-  if (!memos.length) { closeDetailPanel(); return; }
-
-  const firstMemo = memos[0];
-  const categoryLabel = CATEGORY_INFO[firstMemo.category]?.label || firstMemo.category;
-  const toneStr = firstMemo.category === 'emotion' ? ` · ${firstMemo.emotionTone}` : '';
-
-  UI.memoDetailLabel.textContent = categoryLabel + toneStr;
-  UI.memoDetailDate.textContent = formatDate(firstMemo.createdAt);
-
-  if (UI.memoDetailDelete) {
-    UI.memoDetailDelete.hidden = true;
-    UI.memoDetailDelete.disabled = true;
-    UI.memoDetailDelete.setAttribute('aria-hidden', 'true');
-  }
-
-  if (memos.length === 1) {
-    UI.memoDetailText.textContent = firstMemo.transcript || '내용 없음';
-  } else {
-    UI.memoDetailText.textContent = memos
-      .map((m, i) => `${i + 1}. ${m.transcript?.trim() || '내용 없음'}`)
-      .join('\n');
-  }
-
-  const anyActive = memos.some((m) => !m.clearedAt);
-  UI.memoDetailClear.style.display = anyActive ? '' : 'none';
-
-  UI.memoDetailPanel.classList.remove('hidden');
-  UI.memoDetailPanel.classList.add('visible');
-}
-
 function closeDetailPanel() {
-  STATE.detailMemoIds = null;
-  if (!UI.memoDetailPanel) return;
-  UI.memoDetailPanel.classList.add('hidden');
-  UI.memoDetailPanel.classList.remove('visible');
+  return;
 }
 
 function getFloorOnlyScaleMultiplier(assetKey) {
@@ -5557,9 +5702,9 @@ function applyFloorOnlyScaleIfNeeded(object, targetY) {
 function restObjectOnY(object, targetY) {
   applyFloorOnlyScaleIfNeeded(object, targetY);
   object.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(object);
-  if (!Number.isFinite(box.min.y)) return;
-  object.position.y += targetY - box.min.y;
+  TMP_BOX_3.setFromObject(object);
+  if (!Number.isFinite(TMP_BOX_3.min.y)) return;
+  object.position.y += targetY - TMP_BOX_3.min.y;
   object.updateMatrixWorld(true);
 }
 
@@ -5766,19 +5911,62 @@ function hydrateLayoutCache(rawLayoutCache) {
   return next;
 }
 
-function persistStorage() {
-  const payload = {
-    version: STORAGE_PAYLOAD_VERSION,
-    memos: STATE.memos,
-    layoutCache: serializeLayoutCache(),
-  };
-
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+/* ═══ IndexedDB Storage Layer ═══ */
+function openIDB() {
+  return new Promise((resolve, reject) => {
+    try {
+      const request = indexedDB.open(IDB_DB_NAME, IDB_DB_VERSION);
+      request.onupgradeneeded = (event) => {
+        const db = event.target.result;
+        if (!db.objectStoreNames.contains(IDB_STORE_NAME)) {
+          db.createObjectStore(IDB_STORE_NAME, { keyPath: 'key' });
+        }
+      };
+      request.onsuccess = () => { STATE.idbReady = true; STATE.idbDatabase = request.result; resolve(request.result); };
+      request.onerror = () => { console.warn('IndexedDB open failed'); resolve(null); };
+    } catch (e) { console.warn('IndexedDB unavailable'); resolve(null); }
+  });
 }
 
-function loadStorage() {
+function idbPut(db, key, value) {
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE_NAME, 'readwrite');
+      tx.objectStore(IDB_STORE_NAME).put({ key, value });
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+    } catch (e) { resolve(false); }
+  });
+}
+
+function idbGet(db, key) {
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE_NAME, 'readonly');
+      const req = tx.objectStore(IDB_STORE_NAME).get(key);
+      req.onsuccess = () => resolve(req.result?.value ?? null);
+      req.onerror = () => resolve(null);
+    } catch (e) { resolve(null); }
+  });
+}
+
+/* ═══ Persist (IndexedDB primary, localStorage backup) ═══ */
+async function loadStorage() {
+  let raw = null;
+
+  /* Try IndexedDB first */
+  if (STATE.idbDatabase) {
+    try {
+      raw = await idbGet(STATE.idbDatabase, STORAGE_KEY);
+    } catch (e) { /* fall through */ }
+  }
+
+  /* Fallback to localStorage */
+  if (!raw) {
+    try { raw = localStorage.getItem(STORAGE_KEY); } catch (e) { /* ignore */ }
+  }
+
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
 
     if (Array.isArray(parsed)) {
@@ -5795,9 +5983,659 @@ function loadStorage() {
       .filter(Boolean);
     STATE.layoutCache = hydrateLayoutCache(parsed?.layoutCache);
   } catch (error) {
-    console.warn('Failed to load local storage.', error);
+    console.warn('Failed to load storage.', error);
     STATE.memos = [];
     STATE.layoutCache = Object.create(null);
+  }
+}
+
+/* ═══ JSON Export / Import ═══ */
+function exportMemosJSON() {
+  const payload = {
+    version: STORAGE_PAYLOAD_VERSION,
+    exportedAt: new Date().toISOString(),
+    memos: STATE.memos.filter(Boolean),
+    layoutCache: serializeLayoutCache(),
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `mind-room-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 200);
+}
+
+function importMemosJSON() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json,application/json';
+  input.onchange = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const memoList = Array.isArray(parsed?.memos) ? parsed.memos : Array.isArray(parsed) ? parsed : [];
+      const validMemos = memoList.map((item) => sanitizeStoredMemo(item)).filter(Boolean);
+      if (!validMemos.length) { alert('유효한 메모가 없습니다.'); return; }
+
+      const existingIds = new Set(STATE.memos.map((m) => m.id));
+      let addedCount = 0;
+      validMemos.forEach((memo) => {
+        if (!existingIds.has(memo.id)) {
+          STATE.memos.push(memo);
+          existingIds.add(memo.id);
+          addedCount += 1;
+        }
+      });
+
+      if (parsed?.layoutCache) {
+        const imported = hydrateLayoutCache(parsed.layoutCache);
+        Object.entries(imported).forEach(([key, val]) => {
+          if (!STATE.layoutCache[key]) STATE.layoutCache[key] = val;
+        });
+      }
+
+      persistStorage();
+      rebuildVisuals();
+      renderHistory();
+      alert(`${addedCount}개의 메모를 가져왔습니다.`);
+    } catch (e) {
+      console.error('Import failed', e);
+      alert('파일을 읽을 수 없습니다.');
+    }
+  };
+  input.click();
+}
+
+/* ═══ Device Orientation (Tilt) ═══ */
+function setupDeviceOrientation() {
+  const handleOrientation = (event) => {
+    const beta = event.beta ?? 0;   /* front-back tilt: -180..180 */
+    const gamma = event.gamma ?? 0; /* left-right tilt: -90..90 */
+    STATE.tilt.rawBeta = beta;
+    STATE.tilt.rawGamma = gamma;
+    STATE.tilt.active = true;
+  };
+
+  if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+    /* iOS 13+ */
+    document.addEventListener('click', function iosOrientationPermission() {
+      DeviceOrientationEvent.requestPermission().then((response) => {
+        if (response === 'granted') {
+          window.addEventListener('deviceorientation', handleOrientation, { passive: true });
+        }
+      }).catch(() => {});
+      document.removeEventListener('click', iosOrientationPermission);
+    }, { once: true });
+  } else {
+    window.addEventListener('deviceorientation', handleOrientation, { passive: true });
+  }
+}
+
+function updateTiltSmoothing() {
+  if (!STATE.tilt.active) return;
+  /* Normalize beta(front-back) → Z force, gamma(left-right) → X force */
+  /* Use symmetric gamma mapping for balanced left-right movement */
+  const rawGamma = STATE.tilt.rawGamma;
+  const targetX = clamp(rawGamma / 30, -1, 1) * PHYSICS_TILT_FORCE;
+  const targetZ = clamp((STATE.tilt.rawBeta - 45) / 30, -1, 1) * PHYSICS_TILT_FORCE;
+  STATE.tilt.x += (targetX - STATE.tilt.x) * PHYSICS_TILT_SMOOTHING;
+  STATE.tilt.z += (targetZ - STATE.tilt.z) * PHYSICS_TILT_SMOOTHING;
+}
+
+/* ═══ Physics System ═══ */
+function isRecentPhysicsLockedMemo(memo) {
+  if (!memo?.createdAt) return false;
+  const ageMs = Date.now() - new Date(memo.createdAt).getTime();
+  const ageHours = ageMs / (1000 * 60 * 60);
+  return ageHours < PHYSICS_AGE_RECENT_HOURS;
+}
+
+function getPhysicsFriction(memo) {
+  if (!memo) return PHYSICS_FRICTION_MID;
+  const ageMs = Date.now() - new Date(memo.createdAt).getTime();
+  const ageHours = ageMs / (1000 * 60 * 60);
+  if (ageHours < PHYSICS_AGE_RECENT_HOURS) return PHYSICS_FRICTION_RECENT;
+  const ageDays = ageHours / 24;
+  if (ageDays >= PHYSICS_AGE_OLD_DAYS) return PHYSICS_FRICTION_OLD;
+  const t = (ageDays - (PHYSICS_AGE_RECENT_HOURS / 24)) / (PHYSICS_AGE_OLD_DAYS - (PHYSICS_AGE_RECENT_HOURS / 24));
+  return THREE.MathUtils.lerp(PHYSICS_FRICTION_RECENT, PHYSICS_FRICTION_OLD, clamp(t, 0, 1));
+}
+
+function getDeskCollisionBounds() {
+  const bounds = getDeskSurfaceBounds();
+  if (!bounds) return null;
+
+  return {
+    minX: bounds.minX + DESK_SURFACE_SIDE_INSET,
+    maxX: bounds.maxX - DESK_SURFACE_SIDE_INSET,
+    minZ: bounds.minZ + DESK_SURFACE_BACK_INSET,
+    maxZ: bounds.maxZ - DESK_SURFACE_FRONT_INSET,
+  };
+}
+
+function isInsideDeskCollisionBounds(x, z) {
+  const bounds = getDeskCollisionBounds();
+  if (!bounds) return false;
+  return x >= bounds.minX && x <= bounds.maxX && z >= bounds.minZ && z <= bounds.maxZ;
+}
+
+function resolveDeskObstacleCollision(prevX, prevZ, nextX, nextZ) {
+  const bounds = getDeskCollisionBounds();
+  if (!bounds) return null;
+  if (!isInsideDeskCollisionBounds(nextX, nextZ)) return null;
+
+  const insidePrev = prevX >= bounds.minX && prevX <= bounds.maxX && prevZ >= bounds.minZ && prevZ <= bounds.maxZ;
+  const leftPen = Math.abs(nextX - bounds.minX);
+  const rightPen = Math.abs(bounds.maxX - nextX);
+  const backPen = Math.abs(nextZ - bounds.minZ);
+  const frontPen = Math.abs(bounds.maxZ - nextZ);
+
+  if (!insidePrev) {
+    const crossFromLeft = prevX < bounds.minX;
+    const crossFromRight = prevX > bounds.maxX;
+    const crossFromBack = prevZ < bounds.minZ;
+    const crossFromFront = prevZ > bounds.maxZ;
+
+    if (crossFromLeft && leftPen <= rightPen && leftPen <= backPen && leftPen <= frontPen) {
+      return { x: bounds.minX - DESK_OBSTACLE_EPSILON, z: nextZ, axisX: true, axisZ: false };
+    }
+    if (crossFromRight && rightPen <= leftPen && rightPen <= backPen && rightPen <= frontPen) {
+      return { x: bounds.maxX + DESK_OBSTACLE_EPSILON, z: nextZ, axisX: true, axisZ: false };
+    }
+    if (crossFromBack && backPen <= frontPen && backPen <= leftPen && backPen <= rightPen) {
+      return { x: nextX, z: bounds.minZ - DESK_OBSTACLE_EPSILON, axisX: false, axisZ: true };
+    }
+    if (crossFromFront && frontPen <= backPen && frontPen <= leftPen && frontPen <= rightPen) {
+      return { x: nextX, z: bounds.maxZ + DESK_OBSTACLE_EPSILON, axisX: false, axisZ: true };
+    }
+  }
+
+  const minPen = Math.min(leftPen, rightPen, backPen, frontPen);
+  if (minPen == leftPen) return { x: bounds.minX - DESK_OBSTACLE_EPSILON, z: nextZ, axisX: true, axisZ: false };
+  if (minPen == rightPen) return { x: bounds.maxX + DESK_OBSTACLE_EPSILON, z: nextZ, axisX: true, axisZ: false };
+  if (minPen == backPen) return { x: nextX, z: bounds.minZ - DESK_OBSTACLE_EPSILON, axisX: false, axisZ: true };
+  return { x: nextX, z: bounds.maxZ + DESK_OBSTACLE_EPSILON, axisX: false, axisZ: true };
+}
+
+function getDeskLandingStateAt(x, z) {
+  const bounds = getDeskCollisionBounds();
+  const deskTopY = STATE.room?.deskTopY ?? 1.28;
+  if (!bounds) return { onDesk: false, targetY: PHYSICS_FLOOR_Y };
+
+  const insideDesk = x >= bounds.minX
+    && x <= bounds.maxX
+    && z >= bounds.minZ
+    && z <= bounds.maxZ;
+
+  return insideDesk
+    ? { onDesk: true, targetY: deskTopY }
+    : { onDesk: false, targetY: PHYSICS_FLOOR_Y };
+}
+
+function settleVisualAtCurrentXZ(visual) {
+  if (!visual?.object || !visual?.phys) return;
+  const landing = getDeskLandingStateAt(visual.object.position.x, visual.object.position.z);
+  restObjectOnY(visual.object, landing.targetY);
+  visual.phys.onDesk = landing.onDesk;
+  visual.phys.airborne = false;
+  visual.phys.vy = 0;
+  visual.phys.restX = visual.object.position.x;
+  visual.phys.restZ = visual.object.position.z;
+  visual.phys.settled = true;
+  visual.object.updateMatrixWorld(true);
+}
+
+function initVisualPhysics(visual) {
+  if (!visual || visual.kind !== 'asset') return;
+  const memo = visual.memoIds?.length ? STATE.memos.find((m) => m.id === visual.memoIds[0]) : null;
+  const landing = getDeskLandingStateAt(visual.object?.position.x ?? 0, visual.object?.position.z ?? 0);
+  visual.phys = {
+    vx: 0,
+    vy: 0,
+    vz: 0,
+    friction: getPhysicsFriction(memo),
+    restX: visual.object?.position.x ?? 0,
+    restZ: visual.object?.position.z ?? 0,
+    settled: true,
+    onDesk: landing.onDesk,
+    airborne: false,
+  };
+}
+
+function updatePhysics(delta) {
+  if (!STATE.physicsEnabled) return;
+  updateTiltSmoothing();
+
+  const forceX = STATE.tilt.x;
+  const forceZ = STATE.tilt.z;
+  const hasForce = Math.abs(forceX) > 0.0003 || Math.abs(forceZ) > 0.0003;
+
+  const memoMap = new Map();
+  for (let i = 0; i < STATE.memos.length; i++) {
+    const m = STATE.memos[i];
+    if (m && m.id) memoMap.set(m.id, m);
+  }
+
+  const activeDeskVisuals = [];
+  STATE.visuals.forEach((visual) => {
+    if (visual.kind !== 'asset' || !visual.object || !visual.phys) return;
+    if (visual === STATE.grabbedVisual) return;
+    if (visual.dropIntro) return;
+    const memo = visual.memoIds?.length ? memoMap.get(visual.memoIds[0]) || null : null;
+    if (isRecentPhysicsLockedMemo(memo)) return;
+    if (visual.phys.airborne) return;
+    if (!visual.phys.onDesk) return;
+    activeDeskVisuals.push(visual);
+  });
+
+  const sepImpulses = new Map();
+  for (let i = 0; i < activeDeskVisuals.length; i++) {
+    const a = activeDeskVisuals[i];
+    if (!sepImpulses.has(a)) sepImpulses.set(a, { x: 0, z: 0 });
+    for (let j = i + 1; j < activeDeskVisuals.length; j++) {
+      const b = activeDeskVisuals[j];
+      if (!sepImpulses.has(b)) sepImpulses.set(b, { x: 0, z: 0 });
+      const dx = a.object.position.x - b.object.position.x;
+      const dz = a.object.position.z - b.object.position.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist < PHYSICS_SEPARATION_RADIUS && dist > 0.001) {
+        const overlap = (PHYSICS_SEPARATION_RADIUS - dist) / PHYSICS_SEPARATION_RADIUS;
+        const strength = overlap * overlap * PHYSICS_SEPARATION_FORCE;
+        const nx = dx / dist;
+        const nz = dz / dist;
+        const impA = sepImpulses.get(a);
+        const impB = sepImpulses.get(b);
+        impA.x += nx * strength;
+        impA.z += nz * strength;
+        impB.x -= nx * strength;
+        impB.z -= nz * strength;
+      }
+    }
+  }
+
+  STATE.visuals.forEach((visual) => {
+    if (visual.kind !== 'asset' || !visual.object || !visual.phys) return;
+    if (visual === STATE.grabbedVisual) return;
+    if (visual.dropIntro) return;
+
+    const p = visual.phys;
+    const memo = visual.memoIds?.length ? memoMap.get(visual.memoIds[0]) || null : null;
+    p.friction = getPhysicsFriction(memo);
+
+    if (isRecentPhysicsLockedMemo(memo) && !p.airborne) {
+      p.vx = 0;
+      p.vy = 0;
+      p.vz = 0;
+      settleVisualAtCurrentXZ(visual);
+      return;
+    }
+
+    if (p.airborne) {
+      const prevX = visual.object.position.x;
+      const prevY = visual.object.position.y;
+      const prevZ = visual.object.position.z;
+
+      p.vy -= PHYSICS_AIR_GRAVITY;
+      visual.object.position.x += p.vx;
+      visual.object.position.y += p.vy;
+      visual.object.position.z += p.vz;
+
+      const b = PHYSICS_ROOM_BOUNDS;
+      if (visual.object.position.x < b.minX) { visual.object.position.x = b.minX; p.vx *= -PHYSICS_BOUNCE_FACTOR; }
+      if (visual.object.position.x > b.maxX) { visual.object.position.x = b.maxX; p.vx *= -PHYSICS_BOUNCE_FACTOR; }
+      if (visual.object.position.z < b.minZ) { visual.object.position.z = b.minZ; p.vz *= -PHYSICS_BOUNCE_FACTOR; }
+      if (visual.object.position.z > b.maxZ) { visual.object.position.z = b.maxZ; p.vz *= -PHYSICS_BOUNCE_FACTOR; }
+
+      const landing = getDeskLandingStateAt(visual.object.position.x, visual.object.position.z);
+      const deskTopY = STATE.room?.deskTopY ?? 1.28;
+      const crossedDeskTopFromAbove = landing.onDesk
+        && prevY >= deskTopY + 0.04
+        && visual.object.position.y <= deskTopY
+        && p.vy <= 0;
+
+      if (crossedDeskTopFromAbove) {
+        restObjectOnY(visual.object, deskTopY);
+        p.onDesk = true;
+        p.airborne = false;
+        p.vy = 0;
+        p.restX = visual.object.position.x;
+        p.restZ = visual.object.position.z;
+        p.settled = false;
+        visual.object.updateMatrixWorld(true);
+        return;
+      }
+
+      if (visual.object.position.y <= PHYSICS_FLOOR_Y && p.vy <= 0) {
+        restObjectOnY(visual.object, PHYSICS_FLOOR_Y);
+        p.onDesk = false;
+        p.airborne = false;
+        p.vy = 0;
+        p.restX = visual.object.position.x;
+        p.restZ = visual.object.position.z;
+        p.settled = false;
+        visual.object.updateMatrixWorld(true);
+        return;
+      }
+
+      if (visual.object.position.y <= deskTopY - 0.08) {
+        const obstacleHit = resolveDeskObstacleCollision(prevX, prevZ, visual.object.position.x, visual.object.position.z);
+        if (obstacleHit) {
+          visual.object.position.x = obstacleHit.x;
+          visual.object.position.z = obstacleHit.z;
+          if (obstacleHit.axisX) p.vx *= -PHYSICS_BOUNCE_FACTOR;
+          if (obstacleHit.axisZ) p.vz *= -PHYSICS_BOUNCE_FACTOR;
+        }
+      }
+
+      visual.object.updateMatrixWorld(true);
+      return;
+    }
+
+    if (p.onDesk) {
+      if (hasForce) {
+        p.vx += forceX * (1 - p.friction) * 0.8;
+        p.vz += forceZ * (1 - p.friction) * 0.8;
+        p.settled = false;
+      }
+
+      const sep = sepImpulses.get(visual);
+      if (sep && (Math.abs(sep.x) > 0.0001 || Math.abs(sep.z) > 0.0001)) {
+        p.vx += sep.x;
+        p.vz += sep.z;
+        p.settled = false;
+      }
+
+      p.vx *= p.friction;
+      p.vz *= p.friction;
+
+      const speed = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
+      if (speed > PHYSICS_MAX_VELOCITY) {
+        const scale = PHYSICS_MAX_VELOCITY / speed;
+        p.vx *= scale;
+        p.vz *= scale;
+      }
+
+      if (speed < PHYSICS_REST_THRESHOLD && !hasForce) {
+        p.vx = 0;
+        p.vz = 0;
+        p.settled = true;
+        visual.object.updateMatrixWorld(true);
+        return;
+      }
+
+      visual.object.position.x += p.vx;
+      visual.object.position.z += p.vz;
+
+      const deskLanding = getDeskLandingStateAt(visual.object.position.x, visual.object.position.z);
+      if (!deskLanding.onDesk) {
+        p.airborne = true;
+        p.onDesk = false;
+        p.vy = PHYSICS_DESK_EDGE_FALL_SPEED;
+        visual.object.updateMatrixWorld(true);
+        return;
+      }
+
+      restObjectOnY(visual.object, deskLanding.targetY);
+      p.restX = visual.object.position.x;
+      p.restZ = visual.object.position.z;
+      visual.object.updateMatrixWorld(true);
+      return;
+    }
+
+    if (hasForce) {
+      p.vx += forceX * (1 - p.friction) * 0.8;
+      p.vz += forceZ * (1 - p.friction) * 0.8;
+      p.settled = false;
+    }
+
+    p.vx *= PHYSICS_FLOOR_ROLL_FRICTION;
+    p.vz *= PHYSICS_FLOOR_ROLL_FRICTION;
+
+    const floorSpeed = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
+    if (floorSpeed < PHYSICS_REST_THRESHOLD && !hasForce) {
+      p.vx = 0;
+      p.vz = 0;
+      p.settled = true;
+      restObjectOnY(visual.object, PHYSICS_FLOOR_Y);
+      visual.object.updateMatrixWorld(true);
+      return;
+    }
+
+    const prevX = visual.object.position.x;
+    const prevZ = visual.object.position.z;
+    visual.object.position.x += p.vx;
+    visual.object.position.z += p.vz;
+
+    const b = PHYSICS_ROOM_BOUNDS;
+    if (visual.object.position.x < b.minX) { visual.object.position.x = b.minX; p.vx *= -PHYSICS_BOUNCE_FACTOR; }
+    if (visual.object.position.x > b.maxX) { visual.object.position.x = b.maxX; p.vx *= -PHYSICS_BOUNCE_FACTOR; }
+    if (visual.object.position.z < b.minZ) { visual.object.position.z = b.minZ; p.vz *= -PHYSICS_BOUNCE_FACTOR; }
+    if (visual.object.position.z > b.maxZ) { visual.object.position.z = b.maxZ; p.vz *= -PHYSICS_BOUNCE_FACTOR; }
+
+    restObjectOnY(visual.object, PHYSICS_FLOOR_Y);
+    p.onDesk = false;
+    p.restX = visual.object.position.x;
+    p.restZ = visual.object.position.z;
+    p.settled = false;
+    visual.object.updateMatrixWorld(true);
+  });
+}
+
+/* ═══ Long-Press / Drag / Throw Interaction ═══ */
+function setupInteraction() {
+  const canvas = STATE.renderer?.domElement;
+  if (!canvas) return;
+
+  const pointerRay = new THREE.Raycaster();
+  const _ndcVec = new THREE.Vector2();
+
+  function getNDC(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    return _ndcVec.set(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+  }
+
+  function findVisualFromObjectChain(object) {
+    let current = object;
+    while (current) {
+      const directVisual = STATE.visuals.find((v) => v.kind === 'asset' && v.object === current);
+      if (directVisual) return directVisual;
+      const ownerVisual = STATE.visuals.find((v) => v.kind === 'asset' && v.object === current.userData?.hoverOwner);
+      if (ownerVisual) return ownerVisual;
+      current = current.parent;
+    }
+    return null;
+  }
+
+  function findVisualFromIntersect(clientX, clientY) {
+    const ndc = getNDC(clientX, clientY);
+    pointerRay.setFromCamera(ndc, STATE.camera);
+
+    const proxyMeshes = [];
+    for (let i = 0; i < STATE.visuals.length; i++) {
+      const v = STATE.visuals[i];
+      if (v.kind !== 'asset' || !v.object) continue;
+      if (v.hoverProxy) proxyMeshes.push(v.hoverProxy);
+    }
+
+    const proxyHits = pointerRay.intersectObjects(proxyMeshes, false);
+    for (const hit of proxyHits) {
+      const visual = findVisualFromObjectChain(hit.object);
+      if (visual) return visual;
+    }
+
+    const assetRoots = [];
+    for (let i = 0; i < STATE.visuals.length; i++) {
+      const v = STATE.visuals[i];
+      if (v.kind === 'asset' && v.object) assetRoots.push(v.object);
+    }
+    const meshHits = pointerRay.intersectObjects(assetRoots, true);
+    for (const hit of meshHits) {
+      const visual = findVisualFromObjectChain(hit.object);
+      if (visual) return visual;
+    }
+
+    return null;
+  }
+
+  function getFloorPosition(clientX, clientY, yOverride) {
+    const ndc = getNDC(clientX, clientY);
+    pointerRay.setFromCamera(ndc, STATE.camera);
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -(yOverride ?? 0));
+    const pt = new THREE.Vector3();
+    pointerRay.ray.intersectPlane(plane, pt);
+    return pt;
+  }
+
+  function onPointerDown(event) {
+    if (event.button && event.button !== 0) return;
+    if (!UI.entryPanel.classList.contains('hidden') || !UI.historyPanel.classList.contains('hidden')) return;
+
+    const visual = findVisualFromIntersect(event.clientX, event.clientY);
+    if (!visual || visual.kind !== 'asset' || !visual.object) return;
+
+    const now = Date.now();
+    const gs = {
+      startTime: now,
+      startX: event.clientX,
+      startY: event.clientY,
+      pointerId: event.pointerId,
+      isDragging: true,
+      velocityHistory: [{ x: event.clientX, y: event.clientY, t: now }],
+      lastX: event.clientX,
+      lastY: event.clientY,
+      lastTime: now,
+      liftY: Math.max(visual.object.position.y + 0.9, 1.2),
+    };
+
+    STATE.grabState = gs;
+    STATE.grabbedVisual = visual;
+    if (visual.phys) {
+      visual.phys.vx = 0;
+      visual.phys.vy = 0;
+      visual.phys.vz = 0;
+      visual.phys.airborne = false;
+    }
+    canvas.style.cursor = 'grabbing';
+    try { canvas.setPointerCapture(gs.pointerId); } catch (e) { /* ignore */ }
+    if (navigator.vibrate) navigator.vibrate(20);
+  }
+
+  function onPointerMove(event) {
+    if (!STATE.grabState) return;
+    const gs = STATE.grabState;
+    const visual = STATE.grabbedVisual;
+    if (!gs.isDragging || !visual || !visual.object) return;
+
+    const dx = event.clientX - gs.startX;
+    const dy = event.clientY - gs.startY;
+    const movedEnough = Math.sqrt(dx * dx + dy * dy) >= DRAG_DEAD_ZONE;
+
+    const floorPos = getFloorPosition(event.clientX, event.clientY, gs.liftY);
+    if (floorPos && movedEnough) {
+      const isMobileViewport = window.innerWidth < 768;
+      const minX = isMobileViewport ? Math.max(PHYSICS_ROOM_BOUNDS.minX, -MOBILE_VISIBLE_X_RANGE) : PHYSICS_ROOM_BOUNDS.minX;
+      const maxX = isMobileViewport ? Math.min(PHYSICS_ROOM_BOUNDS.maxX, MOBILE_VISIBLE_X_RANGE) : PHYSICS_ROOM_BOUNDS.maxX;
+      const targetX = clamp(floorPos.x, minX, maxX);
+      const targetZ = clamp(floorPos.z, PHYSICS_ROOM_BOUNDS.minZ, PHYSICS_ROOM_BOUNDS.maxZ);
+      visual.object.position.x = THREE.MathUtils.lerp(visual.object.position.x, targetX, DRAG_LERP);
+      visual.object.position.z = THREE.MathUtils.lerp(visual.object.position.z, targetZ, DRAG_LERP);
+      visual.object.position.y = THREE.MathUtils.lerp(visual.object.position.y, gs.liftY, DRAG_LERP);
+      visual.object.updateMatrixWorld(true);
+    }
+
+    const now = Date.now();
+    gs.velocityHistory.push({ x: event.clientX, y: event.clientY, t: now });
+    if (gs.velocityHistory.length > VELOCITY_HISTORY_SIZE) gs.velocityHistory.shift();
+    gs.lastX = event.clientX;
+    gs.lastY = event.clientY;
+    gs.lastTime = now;
+  }
+
+  function onPointerUp(event) {
+    const gs = STATE.grabState;
+    STATE.grabState = null;
+    canvas.style.cursor = '';
+
+    if (!gs || !gs.isDragging || !STATE.grabbedVisual) {
+      STATE.grabbedVisual = null;
+      return;
+    }
+
+    const visual = STATE.grabbedVisual;
+    STATE.grabbedVisual = null;
+    if (!visual.object || !visual.phys) return;
+
+    let throwVX = 0, throwVZ = 0;
+    if (gs.velocityHistory.length >= 2) {
+      const recent = gs.velocityHistory[gs.velocityHistory.length - 1];
+      const older = gs.velocityHistory[0];
+      const dt = Math.max(recent.t - older.t, 1);
+      const floorA = getFloorPosition(older.x, older.y, gs.liftY);
+      const floorB = getFloorPosition(recent.x, recent.y, gs.liftY);
+      if (floorA && floorB) {
+        throwVX = ((floorB.x - floorA.x) / dt) * 1000 * PHYSICS_THROW_MULTIPLIER;
+        throwVZ = ((floorB.z - floorA.z) / dt) * 1000 * PHYSICS_THROW_MULTIPLIER;
+      }
+    }
+
+    visual.phys.vx = clamp(throwVX, -PHYSICS_MAX_VELOCITY, PHYSICS_MAX_VELOCITY);
+    visual.phys.vz = clamp(throwVZ, -PHYSICS_MAX_VELOCITY, PHYSICS_MAX_VELOCITY);
+    const horizontalSpeed = Math.sqrt(visual.phys.vx * visual.phys.vx + visual.phys.vz * visual.phys.vz);
+    visual.phys.vy = Math.min(PHYSICS_THROW_UPWARD + horizontalSpeed * 0.12, 0.24);
+    visual.phys.airborne = true;
+    visual.phys.onDesk = false;
+    visual.phys.settled = false;
+
+    const layoutKey = visual.object?.userData?.layoutCacheKey;
+    if (layoutKey) {
+      syncLayoutCacheFromObject(layoutKey, visual.object, visual.object.userData.layoutCacheExtra || {});
+      persistStorage();
+    }
+
+    try { canvas.releasePointerCapture(event.pointerId); } catch (e) { /* ignore */ }
+  }
+
+  function onPointerCancel(event) {
+    if (STATE.grabbedVisual && STATE.grabbedVisual.object && STATE.grabbedVisual.phys) {
+      settleVisualAtCurrentXZ(STATE.grabbedVisual);
+    }
+    STATE.grabState = null;
+    STATE.grabbedVisual = null;
+    canvas.style.cursor = '';
+  }
+
+  canvas.addEventListener('pointerdown', onPointerDown, { passive: false });
+  canvas.addEventListener('pointermove', onPointerMove, { passive: false });
+  canvas.addEventListener('pointerup', onPointerUp, { passive: false });
+  canvas.addEventListener('pointercancel', onPointerCancel, { passive: false });
+  canvas.addEventListener('contextmenu', (e) => { if (STATE.grabState) e.preventDefault(); });
+  canvas.addEventListener('touchmove', (e) => {
+    if (STATE.grabState?.isDragging) e.preventDefault();
+  }, { passive: false });
+}
+
+function persistStorage() {
+  const payload = {
+    version: STORAGE_PAYLOAD_VERSION,
+    memos: STATE.memos,
+    layoutCache: serializeLayoutCache(),
+  };
+
+  const json = JSON.stringify(payload);
+
+  /* localStorage backup (always) */
+  try { localStorage.setItem(STORAGE_KEY, json); } catch (e) { console.warn('localStorage write failed', e); }
+
+  /* IndexedDB primary */
+  if (STATE.idbDatabase) {
+    idbPut(STATE.idbDatabase, STORAGE_KEY, json).catch(() => {});
   }
 }
 
@@ -6111,5 +6949,4 @@ function createTumblerFallback() {
   group.add(lid);
 
   return group;
-}
-c
+}v
