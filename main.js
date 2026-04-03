@@ -7,11 +7,15 @@ const STORAGE_PAYLOAD_VERSION = 4;
 const NON_DESK_SCALE_MULTIPLIER = 2;
 
 /* ═══ Physics & Interaction Constants ═══ */
-const PHYSICS_FRICTION_RECENT = 0.96;
-const PHYSICS_FRICTION_OLD = 0.78;
-const PHYSICS_FRICTION_MID = 0.88;
+const PHYSICS_FRICTION_RECENT = 0.992;
+const PHYSICS_FRICTION_OLD = 0.72;
+const PHYSICS_FRICTION_MID = 0.93;
+const PHYSICS_AGE_LOCK_HOURS = 6;
 const PHYSICS_AGE_RECENT_HOURS = 72;
-const PHYSICS_AGE_OLD_DAYS = 3;
+const PHYSICS_AGE_OLD_DAYS = 7;
+const PHYSICS_TILT_SCALE_RECENT = 0.12;
+const PHYSICS_TILT_SCALE_MID = 0.55;
+const PHYSICS_TILT_SCALE_OLD = 1.45;
 const PHYSICS_TILT_FORCE = 0.044;
 const PHYSICS_TILT_SMOOTHING = 0.22;
 const PHYSICS_REST_THRESHOLD = 0.0008;
@@ -34,7 +38,7 @@ const PHYSICS_DESK_EDGE_FALL_SPEED = -0.035;
 const PHYSICS_FLOOR_ROLL_FRICTION = 0.965;
 const DESK_SURFACE_SIDE_INSET = 0.08;
 const DESK_SURFACE_BACK_INSET = 0.08;
-const DESK_SURFACE_FRONT_INSET = 0.72;
+const DESK_SURFACE_FRONT_INSET = 1.08;
 const DESK_OBSTACLE_EPSILON = 0.02;
 const VELOCITY_HISTORY_SIZE = 6;
 const IDB_DB_NAME = 'mind-room-db';
@@ -6012,22 +6016,35 @@ function updateTiltSmoothing() {
 }
 
 /* ═══ Physics System ═══ */
+function getPhysicsAgeTier(memo) {
+  if (!memo?.createdAt) return 'mid';
+  const ageMs = Date.now() - new Date(memo.createdAt).getTime();
+  const ageHours = ageMs / (1000 * 60 * 60);
+  if (ageHours < PHYSICS_AGE_RECENT_HOURS) return 'recent';
+  const ageDays = ageHours / 24;
+  if (ageDays >= PHYSICS_AGE_OLD_DAYS) return 'old';
+  return 'mid';
+}
+
 function isRecentPhysicsLockedMemo(memo) {
   if (!memo?.createdAt) return false;
   const ageMs = Date.now() - new Date(memo.createdAt).getTime();
   const ageHours = ageMs / (1000 * 60 * 60);
-  return ageHours < PHYSICS_AGE_RECENT_HOURS;
+  return ageHours < PHYSICS_AGE_LOCK_HOURS;
 }
 
 function getPhysicsFriction(memo) {
-  if (!memo) return PHYSICS_FRICTION_MID;
-  const ageMs = Date.now() - new Date(memo.createdAt).getTime();
-  const ageHours = ageMs / (1000 * 60 * 60);
-  if (ageHours < PHYSICS_AGE_RECENT_HOURS) return PHYSICS_FRICTION_RECENT;
-  const ageDays = ageHours / 24;
-  if (ageDays >= PHYSICS_AGE_OLD_DAYS) return PHYSICS_FRICTION_OLD;
-  const t = (ageDays - (PHYSICS_AGE_RECENT_HOURS / 24)) / (PHYSICS_AGE_OLD_DAYS - (PHYSICS_AGE_RECENT_HOURS / 24));
-  return THREE.MathUtils.lerp(PHYSICS_FRICTION_RECENT, PHYSICS_FRICTION_OLD, clamp(t, 0, 1));
+  const tier = getPhysicsAgeTier(memo);
+  if (tier === 'recent') return PHYSICS_FRICTION_RECENT;
+  if (tier === 'old') return PHYSICS_FRICTION_OLD;
+  return PHYSICS_FRICTION_MID;
+}
+
+function getPhysicsTiltStrength(memo) {
+  const tier = getPhysicsAgeTier(memo);
+  if (tier === 'recent') return PHYSICS_TILT_SCALE_RECENT;
+  if (tier === 'old') return PHYSICS_TILT_SCALE_OLD;
+  return PHYSICS_TILT_SCALE_MID;
 }
 
 function getDeskCollisionBounds() {
@@ -6262,8 +6279,9 @@ function updatePhysics(delta) {
 
     if (p.onDesk) {
       if (hasForce) {
-        p.vx += forceX * (1 - p.friction) * 0.8;
-        p.vz += forceZ * (1 - p.friction) * 0.8;
+        const tiltStrength = getPhysicsTiltStrength(memo);
+        p.vx += forceX * (1 - p.friction) * 0.8 * tiltStrength;
+        p.vz += forceZ * (1 - p.friction) * 0.8 * tiltStrength;
         p.settled = false;
       }
 
@@ -6312,8 +6330,9 @@ function updatePhysics(delta) {
     }
 
     if (hasForce) {
-      p.vx += forceX * (1 - p.friction) * 0.8;
-      p.vz += forceZ * (1 - p.friction) * 0.8;
+      const tiltStrength = getPhysicsTiltStrength(memo);
+      p.vx += forceX * (1 - p.friction) * 0.8 * tiltStrength;
+      p.vz += forceZ * (1 - p.friction) * 0.8 * tiltStrength;
       p.settled = false;
     }
 
