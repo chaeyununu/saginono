@@ -2376,19 +2376,24 @@ function scheduleDeferredVisualReveal() {
     STATE.lastVisualSignature = '';
   };
 
-  const scheduleReveal = () => scheduleDeferredTask(reveal, 1800);
-
   if (typeof document !== 'undefined' && document.hidden) {
     const onVisible = () => {
       if (document.hidden) return;
       document.removeEventListener('visibilitychange', onVisible);
-      scheduleReveal();
+      scheduleDeferredTask(reveal, 0);
     };
     document.addEventListener('visibilitychange', onVisible);
     return;
   }
 
-  scheduleReveal();
+  if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(reveal);
+    });
+    return;
+  }
+
+  scheduleDeferredTask(reveal, 0);
 }
 
 function getTemplateEntryByKey(key) {
@@ -2448,20 +2453,22 @@ async function loadRemainingAssetsInBackground() {
   STATE.remainingAssetLoadPromise = (async () => {
     for (const [key, filename, fallback] of deferredEntries) {
       if (STATE.templates[key]) continue;
-      STATE.templates[key] = await loadTemplate(loader, key, filename, fallback, { allowFallback: false });
+
+      try {
+        STATE.templates[key] = await loadTemplate(loader, key, filename, fallback, { allowFallback: false });
+        scheduleDeferredVisualReveal();
+      } catch (error) {
+        console.warn(`Deferred asset load failed for ${key}. Skipping for now.`, error);
+      }
+
       await new Promise((resolve) => window.setTimeout(resolve, 0));
     }
 
-    STATE.nonDeskAssetsReady = true;
+    STATE.nonDeskAssetsReady = deferredEntries.every(([key]) => Boolean(STATE.templates[key]));
     scheduleDeferredVisualReveal();
-  })()
-    .catch((error) => {
-      console.warn('Deferred asset loading failed. Non-desk visuals will stay hidden until every GLB is loaded.', error);
-      throw error;
-    })
-    .finally(() => {
-      STATE.remainingAssetLoadPromise = null;
-    });
+  })().finally(() => {
+    STATE.remainingAssetLoadPromise = null;
+  });
 
   return STATE.remainingAssetLoadPromise;
 }
@@ -3553,6 +3560,42 @@ function reservePlacementCaches(keys, occupied) {
   keys.forEach((key) => reservePlacementCache(key, occupied));
 }
 
+function hasLoadedTemplate(key) {
+  return Boolean(STATE.templates[key]);
+}
+
+function getFreshClutterAssetKeyForMemo(memo) {
+  const cachedLayout = getLayoutCacheEntry(getClutterFreshLayoutKey(memo));
+  if (cachedLayout?.assetKey) return cachedLayout.assetKey;
+  return getMemoStableHash(memo, 'clutter-variant') % 2 === 0 ? 'paperSingle' : 'paperSingle2';
+}
+
+function canRenderRecordMemo() {
+  return hasLoadedTemplate('note') && hasLoadedTemplate('scribble');
+}
+
+function canRenderFreshClutterMemo(memo) {
+  return hasLoadedTemplate(getFreshClutterAssetKeyForMemo(memo));
+}
+
+function canRenderOldClutterGroup(memos) {
+  if (!Array.isArray(memos) || !memos.length) return false;
+  return memos.length >= 2 ? hasLoadedTemplate('paperPile') : hasLoadedTemplate('paperSingle2');
+}
+
+function canRenderRoutineMemo(memo, now = Date.now()) {
+  const key = getAgeDays(memo.createdAt, now) >= ROUTINE_SCATTER_DAYS ? 'clothesScattered' : 'clothesFolded';
+  return hasLoadedTemplate(key);
+}
+
+function canRenderSnackMemo() {
+  return hasLoadedTemplate('tumbler');
+}
+
+function canRenderEmotionMemo(memo, now = Date.now()) {
+  return hasLoadedTemplate(getEmotionDecayAssetKey(memo, now));
+}
+
 function buildActiveLayoutKeys({ records, clutterFresh, clutterOld, routines, snacks, emotions = [] }) {
   const keys = new Set();
 
@@ -3588,12 +3631,6 @@ function buildActiveLayoutKeys({ records, clutterFresh, clutterOld, routines, sn
 function rebuildVisuals(animateMemoId = null) {
   snapshotLiveVisualTransformsToLayoutCache();
   disposeVisuals();
-
-  if (shouldUseDeskFirstLoading() && !STATE.nonDeskAssetsReady) {
-    updateCounts();
-    STATE.lastVisualSignature = buildVisualSignature();
-    return;
-  }
 
   const activeMemos = STATE.memos.filter((memo) => !memo.clearedAt);
   const now = Date.now();
@@ -3637,6 +3674,13 @@ function rebuildVisuals(animateMemoId = null) {
       }
     });
 
+  const renderableRecords = canRenderRecordMemo() ? records : [];
+  const renderableClutterFresh = clutterFresh.filter((memo) => canRenderFreshClutterMemo(memo));
+  const renderableClutterOld = canRenderOldClutterGroup(clutterOld) ? clutterOld : [];
+  const renderableRoutines = routines.filter((memo) => canRenderRoutineMemo(memo, now));
+  const renderableSnacks = canRenderSnackMemo() ? snacks : [];
+  const renderableEmotions = emotions.filter((memo) => canRenderEmotionMemo(memo, now));
+
   const occupied = {
     desk: [],
     chair: [],
@@ -3656,22 +3700,22 @@ function rebuildVisuals(animateMemoId = null) {
   const deskOverflowPaperSlots = getDeskOverflowPaperSlots();
   const chairOverflowSlots = getChairOverflowSlots();
   const recordFloorSlots = getRecordFloorSlots();
-  const activeLayoutKeys = buildActiveLayoutKeys({ records, clutterFresh, clutterOld, routines, snacks, emotions });
+  const activeLayoutKeys = buildActiveLayoutKeys({ records: renderableRecords, clutterFresh: renderableClutterFresh, clutterOld: renderableClutterOld, routines: renderableRoutines, snacks: renderableSnacks, emotions: renderableEmotions });
 
   pruneLayoutCache(activeLayoutKeys);
   reservePlacementCaches(activeLayoutKeys, occupied);
 
-  let deskNoteCount = records.reduce((count, memo) => {
+  let deskNoteCount = renderableRecords.reduce((count, memo) => {
     const cache = getLayoutCacheEntry(getRecordLayoutKey(memo));
     return count + (cache?.placement === 'desk' && cache?.assetKey !== 'scribble' ? 1 : 0);
   }, 0);
 
-  let deskScribbleCount = records.reduce((count, memo) => {
+  let deskScribbleCount = renderableRecords.reduce((count, memo) => {
     const cache = getLayoutCacheEntry(getRecordLayoutKey(memo));
     return count + (cache?.placement === 'desk' && cache?.assetKey === 'scribble' ? 1 : 0);
   }, 0);
 
-  let deskEmotionRewardCount = snacks.reduce((count, memo) => {
+  let deskEmotionRewardCount = renderableSnacks.reduce((count, memo) => {
     if (!memo.fromEmotion) return count;
     const cache = getLayoutCacheEntry(getEmotionRewardLayoutKey(memo));
     return count + (cache?.placement === 'desk' ? 1 : 0);
@@ -3689,7 +3733,7 @@ function rebuildVisuals(animateMemoId = null) {
   const maxDeskTumblerSlots = Math.min(MAX_DESK_TUMBLER_COUNT, deskTumblerSlots.length);
   const usedDeskTumblerSlotIndices = new Set();
 
-  records.forEach((memo, index) => {
+  renderableRecords.forEach((memo, index) => {
     const layoutKey = getRecordLayoutKey(memo);
     const cachedLayout = getLayoutCacheEntry(layoutKey);
     const useScribble = cachedLayout ? cachedLayout.assetKey === 'scribble' : (getMemoStableHash(memo, 'record-variant') % 3 === 2);
@@ -3817,7 +3861,7 @@ function rebuildVisuals(animateMemoId = null) {
     });
   });
 
-  clutterFresh.forEach((memo, index) => {
+  renderableClutterFresh.forEach((memo, index) => {
     const layoutKey = getClutterFreshLayoutKey(memo);
     const cachedLayout = getLayoutCacheEntry(layoutKey);
     const key = cachedLayout?.assetKey || (getMemoStableHash(memo, 'clutter-variant') % 2 === 0 ? 'paperSingle' : 'paperSingle2');
@@ -3902,9 +3946,9 @@ function rebuildVisuals(animateMemoId = null) {
     });
   });
 
-  if (clutterOld.length) {
-    if (clutterOld.length >= 2) {
-      const layoutKey = getClutterPileLayoutKey(clutterOld);
+  if (renderableClutterOld.length) {
+    if (renderableClutterOld.length >= 2) {
+      const layoutKey = getClutterPileLayoutKey(renderableClutterOld);
       const cachedLayout = getLayoutCacheEntry(layoutKey);
       const pile = createAssetInstance('paperPile');
 
@@ -3951,19 +3995,19 @@ function rebuildVisuals(animateMemoId = null) {
         : { area: 'clutter', placement: 'floor', assetKey: 'paperPile' };
       syncLayoutCacheFromObject(layoutKey, pile.root, finalPileExtra);
       bindObjectLayoutCache(pile.root, layoutKey, finalPileExtra);
-      tagMemoHoverTarget(pile.root, clutterOld.map((memo) => memo.id));
+      tagMemoHoverTarget(pile.root, renderableClutterOld.map((memo) => memo.id));
       STATE.scene.add(pile.root);
       const hoverProxy = createMemoHoverProxy(pile.root);
 
       STATE.visuals.push({
         kind: 'asset',
-        memoIds: clutterOld.map((memo) => memo.id),
+        memoIds: renderableClutterOld.map((memo) => memo.id),
         object: pile.root,
         mixer: null,
         hoverProxy,
       });
     } else {
-      const memo = clutterOld[0];
+      const memo = renderableClutterOld[0];
       const layoutKey = getClutterOldSingleLayoutKey(memo);
       const cachedLayout = getLayoutCacheEntry(layoutKey);
       const instance = createAssetInstance('paperSingle2');
@@ -4024,7 +4068,7 @@ function rebuildVisuals(animateMemoId = null) {
     }
   }
 
-  routines.forEach((memo, index) => {
+  renderableRoutines.forEach((memo, index) => {
     const layoutKey = getRoutineLayoutKey(memo);
     const cachedLayout = getLayoutCacheEntry(layoutKey);
     const oldEnough = getAgeDays(memo.createdAt, now) >= ROUTINE_SCATTER_DAYS;
@@ -4080,7 +4124,7 @@ function rebuildVisuals(animateMemoId = null) {
     });
   });
 
-  snacks.forEach((memo, index) => {
+  renderableSnacks.forEach((memo, index) => {
     const isEmotionSnack = Boolean(memo.fromEmotion);
 
     if (isEmotionSnack) {
@@ -4264,7 +4308,7 @@ function rebuildVisuals(animateMemoId = null) {
     });
   });
 
-  emotions.forEach((memo) => {
+  renderableEmotions.forEach((memo) => {
     createAndAttachEmotionVisual(memo, animateMemoId);
   });
 
