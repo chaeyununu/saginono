@@ -7,15 +7,11 @@ const STORAGE_PAYLOAD_VERSION = 4;
 const NON_DESK_SCALE_MULTIPLIER = 2;
 
 /* ═══ Physics & Interaction Constants ═══ */
-const PHYSICS_FRICTION_RECENT = 0.992;
-const PHYSICS_FRICTION_OLD = 0.72;
-const PHYSICS_FRICTION_MID = 0.93;
-const PHYSICS_AGE_LOCK_HOURS = 6;
+const PHYSICS_FRICTION_RECENT = 0.96;
+const PHYSICS_FRICTION_OLD = 0.78;
+const PHYSICS_FRICTION_MID = 0.88;
 const PHYSICS_AGE_RECENT_HOURS = 72;
-const PHYSICS_AGE_OLD_DAYS = 7;
-const PHYSICS_TILT_SCALE_RECENT = 0.12;
-const PHYSICS_TILT_SCALE_MID = 0.55;
-const PHYSICS_TILT_SCALE_OLD = 1.45;
+const PHYSICS_AGE_OLD_DAYS = 3;
 const PHYSICS_TILT_FORCE = 0.044;
 const PHYSICS_TILT_SMOOTHING = 0.22;
 const PHYSICS_REST_THRESHOLD = 0.0008;
@@ -24,8 +20,8 @@ const PHYSICS_THROW_MULTIPLIER = 0.032;
 const PHYSICS_THROW_FRICTION = 0.92;
 const PHYSICS_BOUNCE_FACTOR = 0.45;
 const PHYSICS_ROOM_BOUNDS = { minX: -8.5, maxX: 8.5, minZ: -5.8, maxZ: 5.4 };
-const PHYSICS_SEPARATION_RADIUS = 2.25;
-const PHYSICS_SEPARATION_FORCE = 0.09;
+const PHYSICS_SEPARATION_RADIUS = 1.75;
+const PHYSICS_SEPARATION_FORCE = 0.03;
 const LONG_PRESS_MS = 0;
 const DRAG_DEAD_ZONE = 3;
 const DRAG_LERP = 0.55;
@@ -36,20 +32,18 @@ const PHYSICS_VERTICAL_BOUNCE = 0.2;
 const PHYSICS_THROW_UPWARD = 0.14;
 const PHYSICS_DESK_EDGE_FALL_SPEED = -0.035;
 const PHYSICS_FLOOR_ROLL_FRICTION = 0.965;
-const PHYSICS_FLOOR_ROLL_FRICTION_RECENT = 0.993;
-const PHYSICS_FLOOR_ROLL_FRICTION_MID = 0.976;
-const PHYSICS_FLOOR_ROLL_FRICTION_OLD = 0.935;
 const DESK_SURFACE_SIDE_INSET = 0.08;
 const DESK_SURFACE_BACK_INSET = 0.08;
-const DESK_SURFACE_FRONT_INSET = 1.08;
+const DESK_SURFACE_FRONT_INSET = 0.72;
 const DESK_OBSTACLE_EPSILON = 0.02;
 const VELOCITY_HISTORY_SIZE = 6;
 const IDB_DB_NAME = 'mind-room-db';
 const IDB_STORE_NAME = 'app-data';
 const IDB_DB_VERSION = 1;
 const GOOGLE_BROWSER_PROMPT_SESSION_KEY = 'mind-room-google-browser-prompt-dismissed-v1';
-const FREEZE_RELOAD_THRESHOLD_MS = 7000;
-const FREEZE_RELOAD_CHECK_MS = 2000;
+const FREEZE_RELOAD_THRESHOLD_MS = 3000;
+const FREEZE_RELOAD_CHECK_MS = 1000;
+const FREEZE_RELOAD_REASON_KEY = 'mind-room-freeze-reload-reason-v1';
 const DUMMY_MEMO_SEED_COUNT = 30;
 const DUMMY_MEMO_SEED_VERSION = 'demo-seed-v1';
 
@@ -1062,12 +1056,15 @@ const STATE = {
   layoutCache: Object.create(null),
   /* physics & interaction */
   tilt: { x: 0, z: 0, rawBeta: 0, rawGamma: 0, active: false },
-  frameWatch: { lastFrameAt: 0, watchdogTimer: null, reloading: false },
   grabbedVisual: null,
   grabState: null, /* { startTime, startX, startY, pointerId, isDragging, velocityHistory, lastX, lastY, lastTime, liftY } */
   longPressTimer: null,
   physicsEnabled: true,
   idbReady: false,
+  freezeWatchdogTimer: null,
+  freezeReloadTriggered: false,
+  lastFrameHeartbeat: performance.now(),
+  loopStarted: false,
   idbDatabase: null,
   easter: {
     overlayRoot: null,
@@ -1665,60 +1662,6 @@ function hideBrowserRecommendationPrompt() {
 }
 
 
-function markFrameAlive(now = performance.now()) {
-  STATE.frameWatch.lastFrameAt = now;
-}
-
-function reloadPageSafely(reason = 'unknown') {
-  if (STATE.frameWatch.reloading) return;
-  STATE.frameWatch.reloading = true;
-
-
-  window.setTimeout(() => {
-    try {
-      window.location.reload();
-    } catch (_) {
-      window.location.href = window.location.href;
-    }
-  }, 0);
-}
-
-function setupAutoReloadGuards() {
-  if (STATE.frameWatch.watchdogTimer) return;
-
-  markFrameAlive();
-
-  const refreshHeartbeat = () => {
-    if (document.visibilityState === 'visible') markFrameAlive();
-  };
-
-  document.addEventListener('visibilitychange', refreshHeartbeat);
-  window.addEventListener('pageshow', refreshHeartbeat);
-  window.addEventListener('focus', refreshHeartbeat);
-
-  STATE.frameWatch.watchdogTimer = window.setInterval(() => {
-    if (STATE.frameWatch.reloading) return;
-    if (document.visibilityState !== 'visible') {
-      markFrameAlive();
-      return;
-    }
-
-    const stalledFor = performance.now() - STATE.frameWatch.lastFrameAt;
-    if (stalledFor >= FREEZE_RELOAD_THRESHOLD_MS) {
-      reloadPageSafely('freeze-watchdog');
-    }
-  }, FREEZE_RELOAD_CHECK_MS);
-}
-
-function attachWebGLContextLossHandler(canvas) {
-  if (!canvas || canvas.dataset.autoReloadGuardAttached === '1') return;
-  canvas.dataset.autoReloadGuardAttached = '1';
-  canvas.addEventListener('webglcontextlost', (event) => {
-    event.preventDefault();
-    reloadPageSafely('webgl-context-lost');
-  }, { passive: false });
-}
-
 init();
 
 async function init() {
@@ -2302,7 +2245,7 @@ function setupScene() {
   STATE.renderer.toneMappingExposure = 1.08;
   UI.sceneRoot.innerHTML = '';
   UI.sceneRoot.appendChild(STATE.renderer.domElement);
-  attachWebGLContextLossHandler(STATE.renderer.domElement);
+  setupFreezeReloadGuards();
 
   const hemi = new THREE.HemisphereLight(0xfffbf4, 0xe9dfd3, 1.7);
   STATE.scene.add(hemi);
@@ -5540,12 +5483,56 @@ function hideMemoHover() {
   }
 }
 
+function requestSafeAppReload(reason = 'unknown') {
+  if (STATE.freezeReloadTriggered) return;
+  STATE.freezeReloadTriggered = true;
+
+  try {
+    sessionStorage.setItem(FREEZE_RELOAD_REASON_KEY, JSON.stringify({ reason, at: Date.now() }));
+  } catch (_) {}
+
+  window.setTimeout(() => {
+    window.location.reload();
+  }, 0);
+}
+
+function setupFreezeReloadGuards() {
+  const canvas = STATE.renderer?.domElement;
+  if (canvas && !canvas.__freezeReloadBound) {
+    canvas.__freezeReloadBound = true;
+    canvas.addEventListener('webglcontextlost', (event) => {
+      event.preventDefault();
+      requestSafeAppReload('webgl-context-lost');
+    }, { passive: false });
+  }
+
+  if (STATE.freezeWatchdogTimer) return;
+
+  STATE.freezeWatchdogTimer = window.setInterval(() => {
+    if (STATE.freezeReloadTriggered || !STATE.loopStarted) return;
+    if (document.visibilityState !== 'visible') return;
+
+    try {
+      const gl = STATE.renderer?.getContext?.();
+      if (gl && typeof gl.isContextLost === 'function' && gl.isContextLost()) {
+        requestSafeAppReload('webgl-context-lost-check');
+        return;
+      }
+    } catch (_) {}
+
+    const staleFor = performance.now() - STATE.lastFrameHeartbeat;
+    if (staleFor >= FREEZE_RELOAD_THRESHOLD_MS) {
+      requestSafeAppReload('frame-freeze');
+    }
+  }, FREEZE_RELOAD_CHECK_MS);
+}
+
 function startLoop() {
-  setupAutoReloadGuards();
-  markFrameAlive();
+  STATE.loopStarted = true;
+  STATE.lastFrameHeartbeat = performance.now();
 
   const frame = () => {
-    markFrameAlive();
+    STATE.lastFrameHeartbeat = performance.now();
     const delta = Math.min(STATE.clock.getDelta(), 0.033);
     const now = Date.now();
 
@@ -6081,42 +6068,22 @@ function updateTiltSmoothing() {
 }
 
 /* ═══ Physics System ═══ */
-function getPhysicsAgeTier(memo) {
-  if (!memo?.createdAt) return 'mid';
-  const ageMs = Date.now() - new Date(memo.createdAt).getTime();
-  const ageHours = ageMs / (1000 * 60 * 60);
-  if (ageHours < PHYSICS_AGE_RECENT_HOURS) return 'recent';
-  const ageDays = ageHours / 24;
-  if (ageDays >= PHYSICS_AGE_OLD_DAYS) return 'old';
-  return 'mid';
-}
-
 function isRecentPhysicsLockedMemo(memo) {
   if (!memo?.createdAt) return false;
   const ageMs = Date.now() - new Date(memo.createdAt).getTime();
   const ageHours = ageMs / (1000 * 60 * 60);
-  return ageHours < PHYSICS_AGE_LOCK_HOURS;
+  return ageHours < PHYSICS_AGE_RECENT_HOURS;
 }
 
 function getPhysicsFriction(memo) {
-  const tier = getPhysicsAgeTier(memo);
-  if (tier === 'recent') return PHYSICS_FRICTION_RECENT;
-  if (tier === 'old') return PHYSICS_FRICTION_OLD;
-  return PHYSICS_FRICTION_MID;
-}
-
-function getPhysicsTiltStrength(memo) {
-  const tier = getPhysicsAgeTier(memo);
-  if (tier === 'recent') return PHYSICS_TILT_SCALE_RECENT;
-  if (tier === 'old') return PHYSICS_TILT_SCALE_OLD;
-  return PHYSICS_TILT_SCALE_MID;
-}
-
-function getPhysicsFloorRollFriction(memo) {
-  const tier = getPhysicsAgeTier(memo);
-  if (tier === 'recent') return PHYSICS_FLOOR_ROLL_FRICTION_RECENT;
-  if (tier === 'old') return PHYSICS_FLOOR_ROLL_FRICTION_OLD;
-  return PHYSICS_FLOOR_ROLL_FRICTION_MID;
+  if (!memo) return PHYSICS_FRICTION_MID;
+  const ageMs = Date.now() - new Date(memo.createdAt).getTime();
+  const ageHours = ageMs / (1000 * 60 * 60);
+  if (ageHours < PHYSICS_AGE_RECENT_HOURS) return PHYSICS_FRICTION_RECENT;
+  const ageDays = ageHours / 24;
+  if (ageDays >= PHYSICS_AGE_OLD_DAYS) return PHYSICS_FRICTION_OLD;
+  const t = (ageDays - (PHYSICS_AGE_RECENT_HOURS / 24)) / (PHYSICS_AGE_OLD_DAYS - (PHYSICS_AGE_RECENT_HOURS / 24));
+  return THREE.MathUtils.lerp(PHYSICS_FRICTION_RECENT, PHYSICS_FRICTION_OLD, clamp(t, 0, 1));
 }
 
 function getDeskCollisionBounds() {
@@ -6234,7 +6201,7 @@ function updatePhysics(delta) {
     if (m && m.id) memoMap.set(m.id, m);
   }
 
-  const activeGroundedVisuals = [];
+  const activeDeskVisuals = [];
   STATE.visuals.forEach((visual) => {
     if (visual.kind !== 'asset' || !visual.object || !visual.phys) return;
     if (visual === STATE.grabbedVisual) return;
@@ -6242,15 +6209,16 @@ function updatePhysics(delta) {
     const memo = visual.memoIds?.length ? memoMap.get(visual.memoIds[0]) || null : null;
     if (isRecentPhysicsLockedMemo(memo)) return;
     if (visual.phys.airborne) return;
-    activeGroundedVisuals.push(visual);
+    if (!visual.phys.onDesk) return;
+    activeDeskVisuals.push(visual);
   });
 
   const sepImpulses = new Map();
-  for (let i = 0; i < activeGroundedVisuals.length; i++) {
-    const a = activeGroundedVisuals[i];
+  for (let i = 0; i < activeDeskVisuals.length; i++) {
+    const a = activeDeskVisuals[i];
     if (!sepImpulses.has(a)) sepImpulses.set(a, { x: 0, z: 0 });
-    for (let j = i + 1; j < activeGroundedVisuals.length; j++) {
-      const b = activeGroundedVisuals[j];
+    for (let j = i + 1; j < activeDeskVisuals.length; j++) {
+      const b = activeDeskVisuals[j];
       if (!sepImpulses.has(b)) sepImpulses.set(b, { x: 0, z: 0 });
       const dx = a.object.position.x - b.object.position.x;
       const dz = a.object.position.z - b.object.position.z;
@@ -6350,9 +6318,8 @@ function updatePhysics(delta) {
 
     if (p.onDesk) {
       if (hasForce) {
-        const tiltStrength = getPhysicsTiltStrength(memo);
-        p.vx += forceX * (1 - p.friction) * 0.8 * tiltStrength;
-        p.vz += forceZ * (1 - p.friction) * 0.8 * tiltStrength;
+        p.vx += forceX * (1 - p.friction) * 0.8;
+        p.vz += forceZ * (1 - p.friction) * 0.8;
         p.settled = false;
       }
 
@@ -6401,22 +6368,13 @@ function updatePhysics(delta) {
     }
 
     if (hasForce) {
-      const tiltStrength = getPhysicsTiltStrength(memo);
-      p.vx += forceX * (1 - p.friction) * 0.8 * tiltStrength;
-      p.vz += forceZ * (1 - p.friction) * 0.8 * tiltStrength;
+      p.vx += forceX * (1 - p.friction) * 0.8;
+      p.vz += forceZ * (1 - p.friction) * 0.8;
       p.settled = false;
     }
 
-    const floorSep = sepImpulses.get(visual);
-    if (floorSep && (Math.abs(floorSep.x) > 0.0001 || Math.abs(floorSep.z) > 0.0001)) {
-      p.vx += floorSep.x;
-      p.vz += floorSep.z;
-      p.settled = false;
-    }
-
-    const floorRollFriction = getPhysicsFloorRollFriction(memo);
-    p.vx *= floorRollFriction;
-    p.vz *= floorRollFriction;
+    p.vx *= PHYSICS_FLOOR_ROLL_FRICTION;
+    p.vz *= PHYSICS_FLOOR_ROLL_FRICTION;
 
     const floorSpeed = Math.sqrt(p.vx * p.vx + p.vz * p.vz);
     if (floorSpeed < PHYSICS_REST_THRESHOLD && !hasForce) {
