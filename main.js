@@ -112,19 +112,19 @@ const CATEGORY_INFO = {
 };
 
 const ASSET_FILES = {
-  desk: 'desk.glb',
+  desk: 'desko.glb',
   note: 'note.glb',
   scribble: 'scribble_note.glb',
   clothesFolded: 'clothes_folded.glb',
-  clothesScattered: 'clothes_scattered.glb',
+  clothesScattered: 'clothes_scatteredo.glb',
   paperSingle: 'paper_single.glb',
   paperSingle2: 'paper_single2.glb',
-  paperPile: 'paper_pile.glb',
-  snack: 'snack.glb',
-  strawberry: 'strawberry.glb',
-  jar: 'jar.glb',
-  burn: 'burn.glb',
-  tumbler: 'tumbler.glb',
+  paperPile: 'paper_pileo.glb',
+  snack: 'snacko.glb',
+  strawberry: 'strawberryo.glb',
+  jar: 'jaro.glb',
+  burn: 'burno.glb',
+  tumbler: 'tumblero.glb',
 };
 
 const TARGET_MAX_DIMENSION = {
