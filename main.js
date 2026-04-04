@@ -1105,28 +1105,6 @@ const EASTER_ULTRA_RARE_CHANCE = 0.0025;
 const EASTER_RA4_COOLDOWN_MS = 12 * 60 * 1000;
 
 
-function isDummyMemo(memo) {
-  if (typeof memo?.id !== 'string') return false;
-  return memo.id.startsWith('dummy-') || memo.id.startsWith('demo-seed-');
-}
-
-function cleanupLegacyDummyMemos() {
-  const previousCount = STATE.memos.length;
-  const filteredMemos = STATE.memos.filter((memo) => !isDummyMemo(memo));
-
-  if (filteredMemos.length === previousCount) return 0;
-
-  STATE.memos = filteredMemos;
-
-  const nextLayoutCache = Object.create(null);
-  Object.entries(STATE.layoutCache || {}).forEach(([key, entry]) => {
-    if (typeof key === 'string' && (key.includes('dummy-') || key.includes('demo-seed-') || key === 'clutter-old:shared')) return;
-    nextLayoutCache[key] = entry;
-  });
-  STATE.layoutCache = nextLayoutCache;
-
-  return previousCount - filteredMemos.length;
-}
 
 
 
@@ -1296,7 +1274,7 @@ function showEasterRa6() {
 }
 
 function getRealMemoCountByCategory(category) {
-  return STATE.memos.filter((memo) => memo && !isDummyMemo(memo) && memo.category === category).length;
+  return STATE.memos.filter((memo) => memo && memo.category === category).length;
 }
 
 function resetDeleteStreak() {
@@ -1332,7 +1310,7 @@ function scheduleCreationEaster(triggerCount, validator, callback) {
 }
 
 function maybeTriggerCreationEasters(memo) {
-  if (!memo || isDummyMemo(memo)) return;
+  if (!memo) return;
 
   if (memo.category === 'snack') {
     const snackCount = getRealMemoCountByCategory('snack');
@@ -1582,8 +1560,6 @@ async function init() {
     loadEasterState();
     setupButtonSoundUI();
     ensureEasterOverlayRoot();
-    const removedLegacyDummyMemoCount = cleanupLegacyDummyMemos();
-    if (removedLegacyDummyMemoCount > 0) persistStorage();
     seedPlayedEmotionRewardDropsFromExistingMemos();
     setupUI();
     renderCategoryChips();
