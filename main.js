@@ -32,9 +32,9 @@ const PHYSICS_VERTICAL_BOUNCE = 0.2;
 const PHYSICS_THROW_UPWARD = 0.14;
 const PHYSICS_DESK_EDGE_FALL_SPEED = -0.035;
 const PHYSICS_FLOOR_ROLL_FRICTION = 0.965;
-const DESK_SURFACE_SIDE_INSET = 0.04;
+const DESK_SURFACE_SIDE_INSET = 0.08;
 const DESK_SURFACE_BACK_INSET = 0.08;
-const DESK_SURFACE_FRONT_INSET = 0.84;
+const DESK_SURFACE_FRONT_INSET = 0.72;
 const DESK_OBSTACLE_EPSILON = 0.02;
 const VELOCITY_HISTORY_SIZE = 6;
 const IDB_DB_NAME = 'mind-room-db';
@@ -54,10 +54,6 @@ const EMOTION_DECAY_DAYS = 7;
 const NEGATIVE_EMOTION_VISIBLE_MS = 6500;
 const POSITIVE_EMOTION_VISIBLE_MS = 5200;
 const VISUAL_CHECK_MS = 4000;
-const RENDER_FREEZE_RELOAD_MS = 5000;
-const RENDER_WATCHDOG_INTERVAL_MS = 1000;
-const RENDER_RELOAD_COOLDOWN_MS = 15000;
-const RENDER_RELOAD_SESSION_KEY = 'mind-room-render-freeze-reload-at-v1';
 const EMOTION_REWARD_DROP_MS = 920;
 const EMOTION_REWARD_DROP_HEIGHT = 1.55;
 const CLUTTER_DROP_MS = 980;
@@ -1048,9 +1044,6 @@ const STATE = {
   lastVisualSignature: '',
   visualCheckElapsed: 0,
   pendingVisualRebuild: false,
-  lastRenderHeartbeatAt: 0,
-  renderLoopStarted: false,
-  renderWatchdogTimer: null,
   appReady: false,
   browserRecommendationDismissed: false,
   loadingOverlay: null,
@@ -5601,48 +5594,7 @@ function hideMemoHover() {
   }
 }
 
-function triggerRenderFreezeReload(reason = 'render-freeze') {
-  if (typeof window === 'undefined' || typeof window.location?.reload !== 'function') return;
-
-  const now = Date.now();
-  try {
-    const lastReloadAt = Number(sessionStorage.getItem(RENDER_RELOAD_SESSION_KEY) || '0');
-    if (Number.isFinite(lastReloadAt) && now - lastReloadAt < RENDER_RELOAD_COOLDOWN_MS) {
-      return;
-    }
-    sessionStorage.setItem(RENDER_RELOAD_SESSION_KEY, String(now));
-  } catch (error) {
-    console.warn('[render-watchdog] Failed to access sessionStorage:', error);
-  }
-
-  console.warn(`[render-watchdog] Reloading due to ${reason}`);
-  window.location.reload();
-}
-
-function startRenderWatchdog() {
-  if (STATE.renderWatchdogTimer || typeof window === 'undefined' || typeof window.setInterval !== 'function') return;
-
-  STATE.lastRenderHeartbeatAt = Date.now();
-  STATE.renderWatchdogTimer = window.setInterval(() => {
-    if (typeof document !== 'undefined' && document.hidden) {
-      STATE.lastRenderHeartbeatAt = Date.now();
-      return;
-    }
-
-    if (!STATE.appReady || !STATE.renderer || !STATE.scene || !STATE.camera) return;
-
-    const stalledForMs = Date.now() - (STATE.lastRenderHeartbeatAt || 0);
-    if (stalledForMs >= RENDER_FREEZE_RELOAD_MS) {
-      triggerRenderFreezeReload(`no-render-heartbeat-${stalledForMs}ms`);
-    }
-  }, RENDER_WATCHDOG_INTERVAL_MS);
-}
-
 function startLoop() {
-  if (STATE.renderLoopStarted) return;
-  STATE.renderLoopStarted = true;
-  startRenderWatchdog();
-
   const frame = () => {
     const delta = Math.min(STATE.clock.getDelta(), 0.033);
     const now = Date.now();
@@ -5696,7 +5648,6 @@ function startLoop() {
     }
 
     STATE.renderer.render(STATE.scene, STATE.camera);
-    STATE.lastRenderHeartbeatAt = Date.now();
     requestAnimationFrame(frame);
   };
 
