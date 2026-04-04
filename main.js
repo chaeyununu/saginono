@@ -41,10 +41,6 @@ const IDB_DB_NAME = 'mind-room-db';
 const IDB_STORE_NAME = 'app-data';
 const IDB_DB_VERSION = 1;
 const GOOGLE_BROWSER_PROMPT_SESSION_KEY = 'mind-room-google-browser-prompt-dismissed-v1';
-const FREEZE_RELOAD_THRESHOLD_MS = 5000;
-const FREEZE_RELOAD_CHECK_MS = 1000;
-const FREEZE_RELOAD_COOLDOWN_MS = 15000;
-const FREEZE_RELOAD_SESSION_KEY = 'mind-room-freeze-reload-at-v1';
 const DUMMY_MEMO_SEED_COUNT = 30;
 const DUMMY_MEMO_SEED_VERSION = 'demo-seed-v1';
 
@@ -58,6 +54,10 @@ const EMOTION_DECAY_DAYS = 7;
 const NEGATIVE_EMOTION_VISIBLE_MS = 6500;
 const POSITIVE_EMOTION_VISIBLE_MS = 5200;
 const VISUAL_CHECK_MS = 4000;
+const RENDER_FREEZE_RELOAD_MS = 5000;
+const RENDER_WATCHDOG_INTERVAL_MS = 1000;
+const RENDER_RELOAD_COOLDOWN_MS = 15000;
+const RENDER_RELOAD_SESSION_KEY = 'mind-room-render-freeze-reload-at-v1';
 const EMOTION_REWARD_DROP_MS = 920;
 const EMOTION_REWARD_DROP_HEIGHT = 1.55;
 const CLUTTER_DROP_MS = 980;
@@ -1048,13 +1048,14 @@ const STATE = {
   lastVisualSignature: '',
   visualCheckElapsed: 0,
   pendingVisualRebuild: false,
+  lastRenderHeartbeatAt: 0,
+  renderLoopStarted: false,
+  renderWatchdogTimer: null,
   appReady: false,
   browserRecommendationDismissed: false,
   loadingOverlay: null,
   nonDeskAssetsReady: false,
   remainingAssetLoadPromise: null,
-  lastFrameHeartbeat: 0,
-  freezeWatchdogTimer: null,
   deferredVisualRevealScheduled: false,
   playedEmotionRewardDropMemoIds: new Set(),
   layoutCache: Object.create(null),
@@ -5600,84 +5601,49 @@ function hideMemoHover() {
   }
 }
 
+function triggerRenderFreezeReload(reason = 'render-freeze') {
+  if (typeof window === 'undefined' || typeof window.location?.reload !== 'function') return;
 
-function markFrameHeartbeat(now = (typeof performance !== 'undefined' ? performance.now() : Date.now())) {
-  STATE.lastFrameHeartbeat = now;
-}
-
-function canTriggerFreezeReload(nowMs = Date.now()) {
+  const now = Date.now();
   try {
-    const lastReloadAt = Number(sessionStorage.getItem(FREEZE_RELOAD_SESSION_KEY) || 0);
-    return !lastReloadAt || (nowMs - lastReloadAt) >= FREEZE_RELOAD_COOLDOWN_MS;
+    const lastReloadAt = Number(sessionStorage.getItem(RENDER_RELOAD_SESSION_KEY) || '0');
+    if (Number.isFinite(lastReloadAt) && now - lastReloadAt < RENDER_RELOAD_COOLDOWN_MS) {
+      return;
+    }
+    sessionStorage.setItem(RENDER_RELOAD_SESSION_KEY, String(now));
   } catch (error) {
-    return true;
+    console.warn('[render-watchdog] Failed to access sessionStorage:', error);
   }
-}
 
-function markFreezeReloadTriggered(nowMs = Date.now()) {
-  try {
-    sessionStorage.setItem(FREEZE_RELOAD_SESSION_KEY, String(nowMs));
-  } catch (error) {
-    /* ignore sessionStorage failures */
-  }
-}
-
-function triggerFreezeReload(reason = 'frame-stall') {
-  if (typeof window === 'undefined') return;
-  if (typeof document !== 'undefined' && document.hidden) return;
-
-  const nowMs = Date.now();
-  if (!canTriggerFreezeReload(nowMs)) return;
-
-  markFreezeReloadTriggered(nowMs);
-  console.warn(`Freeze watchdog triggered reload (${reason}).`);
+  console.warn(`[render-watchdog] Reloading due to ${reason}`);
   window.location.reload();
 }
 
-function setupFreezeReloadWatchdog() {
-  if (typeof window === 'undefined' || STATE.freezeWatchdogTimer) return;
+function startRenderWatchdog() {
+  if (STATE.renderWatchdogTimer || typeof window === 'undefined' || typeof window.setInterval !== 'function') return;
 
-  const syncHeartbeat = () => {
-    markFrameHeartbeat();
-  };
-
-  if (typeof document !== 'undefined') {
-    document.addEventListener('visibilitychange', syncHeartbeat, { passive: true });
-  }
-
-  window.addEventListener('pageshow', syncHeartbeat, { passive: true });
-  window.addEventListener('pagehide', syncHeartbeat, { passive: true });
-  window.addEventListener('focus', syncHeartbeat, { passive: true });
-  window.addEventListener('blur', syncHeartbeat, { passive: true });
-
-  STATE.freezeWatchdogTimer = window.setInterval(() => {
-    if (!STATE.lastFrameHeartbeat) return;
+  STATE.lastRenderHeartbeatAt = Date.now();
+  STATE.renderWatchdogTimer = window.setInterval(() => {
     if (typeof document !== 'undefined' && document.hidden) {
-      markFrameHeartbeat();
+      STATE.lastRenderHeartbeatAt = Date.now();
       return;
     }
 
-    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    if ((now - STATE.lastFrameHeartbeat) >= FREEZE_RELOAD_THRESHOLD_MS) {
-      triggerFreezeReload('watchdog-interval');
+    if (!STATE.appReady || !STATE.renderer || !STATE.scene || !STATE.camera) return;
+
+    const stalledForMs = Date.now() - (STATE.lastRenderHeartbeatAt || 0);
+    if (stalledForMs >= RENDER_FREEZE_RELOAD_MS) {
+      triggerRenderFreezeReload(`no-render-heartbeat-${stalledForMs}ms`);
     }
-  }, FREEZE_RELOAD_CHECK_MS);
+  }, RENDER_WATCHDOG_INTERVAL_MS);
 }
 
 function startLoop() {
-  setupFreezeReloadWatchdog();
+  if (STATE.renderLoopStarted) return;
+  STATE.renderLoopStarted = true;
+  startRenderWatchdog();
 
-  const frame = (frameNow = (typeof performance !== 'undefined' ? performance.now() : Date.now())) => {
-    if (STATE.lastFrameHeartbeat
-        && typeof document !== 'undefined'
-        && !document.hidden
-        && (frameNow - STATE.lastFrameHeartbeat) >= FREEZE_RELOAD_THRESHOLD_MS) {
-      triggerFreezeReload('requestAnimationFrame-gap');
-      return;
-    }
-
-    markFrameHeartbeat(frameNow);
-
+  const frame = () => {
     const delta = Math.min(STATE.clock.getDelta(), 0.033);
     const now = Date.now();
 
@@ -5730,10 +5696,10 @@ function startLoop() {
     }
 
     STATE.renderer.render(STATE.scene, STATE.camera);
+    STATE.lastRenderHeartbeatAt = Date.now();
     requestAnimationFrame(frame);
   };
 
-  markFrameHeartbeat();
   requestAnimationFrame(frame);
 }
 
