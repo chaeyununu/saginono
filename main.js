@@ -41,8 +41,6 @@ const IDB_DB_NAME = 'mind-room-db';
 const IDB_STORE_NAME = 'app-data';
 const IDB_DB_VERSION = 1;
 const GOOGLE_BROWSER_PROMPT_SESSION_KEY = 'mind-room-google-browser-prompt-dismissed-v1';
-const DUMMY_MEMO_SEED_COUNT = 30;
-const DUMMY_MEMO_SEED_VERSION = 'demo-seed-v1';
 
 const SILENCE_MS = 1800;
 const SPEECH_FINALIZE_GRACE_MS = 240;
@@ -68,7 +66,7 @@ const CLUTTER_DROP_HIGH_HEIGHT = 5.85;
 
 const DESK_ASSET_Y_OFFSET = {
   note: 0.1,
-  scribble: -1.08,
+  scribble: -0.78,
   tumbler: -0.05,
 };
 
@@ -1108,7 +1106,8 @@ const EASTER_RA4_COOLDOWN_MS = 12 * 60 * 1000;
 
 
 function isDummyMemo(memo) {
-  return typeof memo?.id === 'string' && memo.id.startsWith('dummy-');
+  if (typeof memo?.id !== 'string') return false;
+  return memo.id.startsWith('dummy-') || memo.id.startsWith('demo-seed-');
 }
 
 function cleanupLegacyDummyMemos() {
@@ -1121,7 +1120,7 @@ function cleanupLegacyDummyMemos() {
 
   const nextLayoutCache = Object.create(null);
   Object.entries(STATE.layoutCache || {}).forEach(([key, entry]) => {
-    if (typeof key === 'string' && (key.includes('dummy-') || key === 'clutter-old:shared')) return;
+    if (typeof key === 'string' && (key.includes('dummy-') || key.includes('demo-seed-') || key === 'clutter-old:shared')) return;
     nextLayoutCache[key] = entry;
   });
   STATE.layoutCache = nextLayoutCache;
@@ -1130,88 +1129,6 @@ function cleanupLegacyDummyMemos() {
 }
 
 
-function createSeedDummyMemos(count = DUMMY_MEMO_SEED_COUNT, nowMs = Date.now()) {
-  const timelineDays = [
-    0.08, 0.18, 0.35, 0.6, 0.9,
-    1.2, 1.8, 2.4, 2.9, 3.2,
-    3.8, 4.4, 4.9, 5.4, 6.1,
-    6.8, 7.3, 8.2, 9.5, 11,
-    12.5, 14, 16, 18, 20,
-    24, 28, 32, 38, 45,
-  ];
-  const categoryCycle = [
-    'emotion', 'record', 'clutter', 'routine', 'snack',
-    'emotion', 'record', 'clutter', 'routine', 'snack',
-  ];
-  const transcriptPool = {
-    emotion: [
-      '오늘은 기분이 가벼워서 방 안이 조금 밝게 느껴졌어.',
-      '조금 예민하지만 그래도 정리해보려는 마음은 있어.',
-      '애매하게 마음이 흔들렸는데 일단 기록해둘래.',
-      '생각보다 괜찮았고 다시 해볼 힘이 조금 생겼어.',
-      '감정이 묘하게 남아서 눈에 보이게 두고 싶었어.',
-      '괜히 울컥했지만 금방 지나가길 바라면서 남겨둠.',
-    ],
-    record: [
-      '오늘 작업 아이디어 하나를 급하게 메모해뒀어.',
-      '수업 듣다가 떠오른 구조를 짧게 적어뒀어.',
-      '앱 수정 포인트를 잊기 전에 남겨놓음.',
-      '나중에 다시 볼 만한 생각이라 기록해둠.',
-      '사소하지만 중요한 디테일이라서 써둠.',
-      '해야 할 작업 흐름을 간단히 정리해봤어.',
-    ],
-    clutter: [
-      '머릿속이 복잡해서 잡생각을 바닥에 던져놓는 느낌.',
-      '괜히 계속 맴도는 생각이라 흩뿌려두고 싶었어.',
-      '정리 안 된 불안이 조금 남아 있었어.',
-      '쓸데없는 생각인데도 자꾸 돌아와서 남김.',
-      '지워버리고 싶지만 일단 눈에 보이게 내려놓음.',
-      '복잡한 마음을 종이처럼 던져두는 기분이었어.',
-    ],
-    routine: [
-      '생활 리듬을 다시 잡아보려고 정리 메모를 남김.',
-      '작은 루틴 하나라도 붙잡고 싶어서 기록했어.',
-      '오늘은 정돈된 상태를 조금 유지하고 싶었어.',
-      '흐트러진 패턴을 다시 세우려는 마음으로 남김.',
-      '내일을 위해 정리해야 할 일을 적어둠.',
-      '생활 흐름을 다시 맞춰보려는 체크포인트야.',
-    ],
-    snack: [
-      '이번엔 진짜 해보겠다는 다짐을 하나 남겨둠.',
-      '작게라도 꾸준히 가보자는 마음이 들었어.',
-      '다시 시작하자는 의미로 남겨둔 다짐이야.',
-      '미루지 않겠다는 마음을 눈에 보이게 두고 싶었어.',
-      '작업을 끝까지 끌고 가보자는 다짐이야.',
-      '흔들려도 계속 가보자는 쪽으로 마음을 정리했어.',
-    ],
-  };
-
-  const memos = [];
-  for (let i = 0; i < count; i += 1) {
-    const category = categoryCycle[i % categoryCycle.length];
-    const pool = transcriptPool[category] || ['테스트 메모'];
-    const transcript = pool[i % pool.length];
-    const ageDays = timelineDays[i % timelineDays.length] + Math.floor(i / timelineDays.length) * 7;
-    const createdAt = new Date(nowMs - ageDays * 24 * 60 * 60 * 1000).toISOString();
-    memos.push({
-      id: `${DUMMY_MEMO_SEED_VERSION}-${String(i + 1).padStart(2, '0')}`,
-      category,
-      emotionTone: category === 'emotion' ? (i % 2 === 0 ? 'good' : 'bad') : null,
-      transcript,
-      createdAt,
-      clearedAt: null,
-    });
-  }
-
-  return memos.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-}
-
-function seedDummyMemosIfNeeded() {
-  if (STATE.memos.length > 0) return false;
-  STATE.memos = createSeedDummyMemos();
-  STATE.layoutCache = Object.create(null);
-  return true;
-}
 
 function loadEasterState() {
   try {
@@ -1667,8 +1584,6 @@ async function init() {
     ensureEasterOverlayRoot();
     const removedLegacyDummyMemoCount = cleanupLegacyDummyMemos();
     if (removedLegacyDummyMemoCount > 0) persistStorage();
-    const didSeedDummyMemos = seedDummyMemosIfNeeded();
-    if (didSeedDummyMemos) persistStorage();
     seedPlayedEmotionRewardDropsFromExistingMemos();
     setupUI();
     renderCategoryChips();
