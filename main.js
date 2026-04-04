@@ -41,6 +41,10 @@ const IDB_DB_NAME = 'mind-room-db';
 const IDB_STORE_NAME = 'app-data';
 const IDB_DB_VERSION = 1;
 const GOOGLE_BROWSER_PROMPT_SESSION_KEY = 'mind-room-google-browser-prompt-dismissed-v1';
+const FREEZE_RELOAD_THRESHOLD_MS = 5000;
+const FREEZE_RELOAD_CHECK_MS = 1000;
+const FREEZE_RELOAD_COOLDOWN_MS = 15000;
+const FREEZE_RELOAD_SESSION_KEY = 'mind-room-freeze-reload-at-v1';
 const DUMMY_MEMO_SEED_COUNT = 30;
 const DUMMY_MEMO_SEED_VERSION = 'demo-seed-v1';
 
@@ -54,10 +58,6 @@ const EMOTION_DECAY_DAYS = 7;
 const NEGATIVE_EMOTION_VISIBLE_MS = 6500;
 const POSITIVE_EMOTION_VISIBLE_MS = 5200;
 const VISUAL_CHECK_MS = 4000;
-const FREEZE_WATCHDOG_FRAME_GAP_MS = 9000;
-const FREEZE_WATCHDOG_INTERVAL_MS = 1500;
-const FREEZE_WATCHDOG_RELOAD_COOLDOWN_MS = 45000;
-const FREEZE_WATCHDOG_SESSION_KEY = 'mind-room-freeze-reload-at-v1';
 const EMOTION_REWARD_DROP_MS = 920;
 const EMOTION_REWARD_DROP_HEIGHT = 1.55;
 const CLUTTER_DROP_MS = 980;
@@ -1053,10 +1053,9 @@ const STATE = {
   loadingOverlay: null,
   nonDeskAssetsReady: false,
   remainingAssetLoadPromise: null,
-  deferredVisualRevealScheduled: false,
+  lastFrameHeartbeat: 0,
   freezeWatchdogTimer: null,
-  freezeWatchdogArmed: false,
-  lastFrameAt: 0,
+  deferredVisualRevealScheduled: false,
   playedEmotionRewardDropMemoIds: new Set(),
   layoutCache: Object.create(null),
   /* physics & interaction */
@@ -1665,71 +1664,6 @@ function hideBrowserRecommendationPrompt() {
 
 init();
 
-
-function hasRenderableAssetVisuals() {
-  return STATE.visuals.some((visual) => visual?.kind === 'asset' && visual.object);
-}
-
-function shouldWatchForFrozenPartialLoad() {
-  if (!STATE.appReady) return false;
-  if (STATE.nonDeskAssetsReady) return false;
-  if (!STATE.remainingAssetLoadPromise) return false;
-  if (typeof document !== 'undefined' && document.hidden) return false;
-  return hasRenderableAssetVisuals();
-}
-
-function getLastFreezeReloadAt() {
-  try {
-    return Number(sessionStorage.getItem(FREEZE_WATCHDOG_SESSION_KEY) || 0);
-  } catch (error) {
-    return 0;
-  }
-}
-
-function setLastFreezeReloadAt(timestamp) {
-  try {
-    sessionStorage.setItem(FREEZE_WATCHDOG_SESSION_KEY, String(timestamp));
-  } catch (error) {
-    /* sessionStorage unavailable */
-  }
-}
-
-function triggerFreezeSafetyReload() {
-  const now = Date.now();
-  if (now - getLastFreezeReloadAt() < FREEZE_WATCHDOG_RELOAD_COOLDOWN_MS) {
-    STATE.freezeWatchdogArmed = false;
-    STATE.lastFrameAt = performance.now();
-    return;
-  }
-
-  setLastFreezeReloadAt(now);
-  window.location.reload();
-}
-
-function startFreezeWatchdog() {
-  if (STATE.freezeWatchdogTimer || typeof window === 'undefined') return;
-
-  STATE.lastFrameAt = performance.now();
-  STATE.freezeWatchdogTimer = window.setInterval(() => {
-    const now = performance.now();
-
-    if (!shouldWatchForFrozenPartialLoad()) {
-      STATE.freezeWatchdogArmed = false;
-      return;
-    }
-
-    if (!STATE.freezeWatchdogArmed) {
-      STATE.freezeWatchdogArmed = true;
-      STATE.lastFrameAt = now;
-      return;
-    }
-
-    if (now - STATE.lastFrameAt >= FREEZE_WATCHDOG_FRAME_GAP_MS) {
-      triggerFreezeSafetyReload();
-    }
-  }, FREEZE_WATCHDOG_INTERVAL_MS);
-}
-
 async function init() {
   try {
     await openIDB();
@@ -1757,7 +1691,6 @@ async function init() {
       maybeTriggerReloadRa3();
       startLoop();
       STATE.appReady = true;
-      startFreezeWatchdog();
       hideLoadingOverlay();
       renderHistory();
 
@@ -1776,7 +1709,6 @@ async function init() {
     maybeTriggerReloadRa3();
     startLoop();
     STATE.appReady = true;
-    startFreezeWatchdog();
     hideLoadingOverlay();
   } catch (error) {
     console.error('App init failed:', error);
@@ -5668,9 +5600,84 @@ function hideMemoHover() {
   }
 }
 
+
+function markFrameHeartbeat(now = (typeof performance !== 'undefined' ? performance.now() : Date.now())) {
+  STATE.lastFrameHeartbeat = now;
+}
+
+function canTriggerFreezeReload(nowMs = Date.now()) {
+  try {
+    const lastReloadAt = Number(sessionStorage.getItem(FREEZE_RELOAD_SESSION_KEY) || 0);
+    return !lastReloadAt || (nowMs - lastReloadAt) >= FREEZE_RELOAD_COOLDOWN_MS;
+  } catch (error) {
+    return true;
+  }
+}
+
+function markFreezeReloadTriggered(nowMs = Date.now()) {
+  try {
+    sessionStorage.setItem(FREEZE_RELOAD_SESSION_KEY, String(nowMs));
+  } catch (error) {
+    /* ignore sessionStorage failures */
+  }
+}
+
+function triggerFreezeReload(reason = 'frame-stall') {
+  if (typeof window === 'undefined') return;
+  if (typeof document !== 'undefined' && document.hidden) return;
+
+  const nowMs = Date.now();
+  if (!canTriggerFreezeReload(nowMs)) return;
+
+  markFreezeReloadTriggered(nowMs);
+  console.warn(`Freeze watchdog triggered reload (${reason}).`);
+  window.location.reload();
+}
+
+function setupFreezeReloadWatchdog() {
+  if (typeof window === 'undefined' || STATE.freezeWatchdogTimer) return;
+
+  const syncHeartbeat = () => {
+    markFrameHeartbeat();
+  };
+
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', syncHeartbeat, { passive: true });
+  }
+
+  window.addEventListener('pageshow', syncHeartbeat, { passive: true });
+  window.addEventListener('pagehide', syncHeartbeat, { passive: true });
+  window.addEventListener('focus', syncHeartbeat, { passive: true });
+  window.addEventListener('blur', syncHeartbeat, { passive: true });
+
+  STATE.freezeWatchdogTimer = window.setInterval(() => {
+    if (!STATE.lastFrameHeartbeat) return;
+    if (typeof document !== 'undefined' && document.hidden) {
+      markFrameHeartbeat();
+      return;
+    }
+
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if ((now - STATE.lastFrameHeartbeat) >= FREEZE_RELOAD_THRESHOLD_MS) {
+      triggerFreezeReload('watchdog-interval');
+    }
+  }, FREEZE_RELOAD_CHECK_MS);
+}
+
 function startLoop() {
-  const frame = () => {
-    STATE.lastFrameAt = performance.now();
+  setupFreezeReloadWatchdog();
+
+  const frame = (frameNow = (typeof performance !== 'undefined' ? performance.now() : Date.now())) => {
+    if (STATE.lastFrameHeartbeat
+        && typeof document !== 'undefined'
+        && !document.hidden
+        && (frameNow - STATE.lastFrameHeartbeat) >= FREEZE_RELOAD_THRESHOLD_MS) {
+      triggerFreezeReload('requestAnimationFrame-gap');
+      return;
+    }
+
+    markFrameHeartbeat(frameNow);
+
     const delta = Math.min(STATE.clock.getDelta(), 0.033);
     const now = Date.now();
 
@@ -5726,6 +5733,7 @@ function startLoop() {
     requestAnimationFrame(frame);
   };
 
+  markFrameHeartbeat();
   requestAnimationFrame(frame);
 }
 
