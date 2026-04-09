@@ -34,21 +34,6 @@ const PHYSICS_VERTICAL_BOUNCE = 0.2;
 const PHYSICS_THROW_UPWARD = 0.12;
 const PHYSICS_DESK_EDGE_FALL_SPEED = -0.028;
 const PHYSICS_FLOOR_ROLL_FRICTION = 0.96;
-const PHYSICS_FLOAT_MIN_Y = 0.9;
-const PHYSICS_FLOAT_MAX_Y = 4.85;
-const PHYSICS_FLOAT_CENTER_Y = 2.35;
-const PHYSICS_FLOAT_Y_BOUNCE = 0.72;
-const PHYSICS_FLOAT_DRAG = 0.986;
-const PHYSICS_FLOAT_VERTICAL_DRAG = 0.988;
-const PHYSICS_FLOAT_BUOYANCY = 0.0065;
-const PHYSICS_FLOAT_TILT_BOOST = 1.25;
-const PHYSICS_FLOAT_SHAKE_BOOST = 0.022;
-const PHYSICS_FLOAT_COLLISION_RADIUS = 1.9;
-const PHYSICS_FLOAT_COLLISION_FORCE = 0.04;
-const PHYSICS_FLOAT_MAX_SPEED = 0.22;
-const FLOAT_MODE_BETA_DELTA_THRESHOLD = 95;
-const FLOAT_MODE_GAMMA_THRESHOLD = 88;
-const FLOAT_MODE_LIFT_VELOCITY = 0.08;
 const DESK_SURFACE_SIDE_INSET = 0.08;
 const DESK_SURFACE_BACK_INSET = 0.08;
 const DESK_SURFACE_FRONT_INSET = 0.72;
@@ -1072,7 +1057,7 @@ const STATE = {
   playedEmotionRewardDropMemoIds: new Set(),
   layoutCache: Object.create(null),
   /* physics & interaction */
-  tilt: { x: 0, z: 0, rawBeta: 0, rawGamma: 0, motionX: 0, motionZ: 0, active: false },
+  tilt: { x: 0, z: 0, rawBeta: 0, rawGamma: 0, active: false },
   grabbedVisual: null,
   grabState: null, /* { startTime, startX, startY, pointerId, isDragging, velocityHistory, lastX, lastY, lastTime, liftY } */
   longPressTimer: null,
@@ -6057,41 +6042,30 @@ function setupDeviceOrientation() {
     STATE.tilt.active = true;
   };
 
-  const handleMotion = (event) => {
-    const accel = event.accelerationIncludingGravity || event.acceleration || {};
-    STATE.tilt.motionX = clamp((accel.x ?? 0) / 4, -1, 1);
-    STATE.tilt.motionZ = clamp((accel.y ?? 0) / 4, -1, 1);
-    STATE.tilt.active = true;
-  };
-
   if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
     /* iOS 13+ */
     document.addEventListener('click', function iosOrientationPermission() {
       DeviceOrientationEvent.requestPermission().then((response) => {
         if (response === 'granted') {
           window.addEventListener('deviceorientation', handleOrientation, { passive: true });
-          window.addEventListener('devicemotion', handleMotion, { passive: true });
         }
       }).catch(() => {});
       document.removeEventListener('click', iosOrientationPermission);
     }, { once: true });
   } else {
     window.addEventListener('deviceorientation', handleOrientation, { passive: true });
-    window.addEventListener('devicemotion', handleMotion, { passive: true });
   }
 }
 
 function updateTiltSmoothing() {
   if (!STATE.tilt.active) return;
+  /* Normalize beta(front-back) → Z force, gamma(left-right) → X force */
+  /* Use symmetric gamma mapping for balanced left-right movement */
   const rawGamma = STATE.tilt.rawGamma;
-  const targetX = clamp(rawGamma / 30, -1, 1) * PHYSICS_TILT_FORCE + (STATE.tilt.motionX || 0) * PHYSICS_FLOAT_SHAKE_BOOST;
-  const targetZ = clamp((STATE.tilt.rawBeta - 45) / 30, -1, 1) * PHYSICS_TILT_FORCE + (STATE.tilt.motionZ || 0) * PHYSICS_FLOAT_SHAKE_BOOST;
-
+  const targetX = clamp(rawGamma / 30, -1, 1) * PHYSICS_TILT_FORCE;
+  const targetZ = clamp((STATE.tilt.rawBeta - 45) / 30, -1, 1) * PHYSICS_TILT_FORCE;
   STATE.tilt.x += (targetX - STATE.tilt.x) * PHYSICS_TILT_SMOOTHING;
   STATE.tilt.z += (targetZ - STATE.tilt.z) * PHYSICS_TILT_SMOOTHING;
-
-  STATE.tilt.motionX *= 0.86;
-  STATE.tilt.motionZ *= 0.86;
 }
 
 /* ═══ Physics System ═══ */
@@ -6197,17 +6171,10 @@ function settleVisualAtCurrentXZ(visual) {
   visual.object.updateMatrixWorld(true);
 }
 
-function isFloatOrientationActive() {
-  const rawBeta = Number.isFinite(STATE.tilt.rawBeta) ? STATE.tilt.rawBeta : 45;
-  const rawGamma = Number.isFinite(STATE.tilt.rawGamma) ? STATE.tilt.rawGamma : 0;
-  const betaDeltaFromNaturalHold = Math.abs(rawBeta - 45);
-  const gammaAbs = Math.abs(rawGamma);
-  return betaDeltaFromNaturalHold >= FLOAT_MODE_BETA_DELTA_THRESHOLD || gammaAbs >= FLOAT_MODE_GAMMA_THRESHOLD;
-}
-
 function initVisualPhysics(visual) {
   if (!visual || visual.kind !== 'asset') return;
   const memo = visual.memoIds?.length ? STATE.memos.find((m) => m.id === visual.memoIds[0]) : null;
+  const landing = getDeskLandingStateAt(visual.object?.position.x ?? 0, visual.object?.position.z ?? 0);
   visual.phys = {
     vx: 0,
     vy: 0,
@@ -6215,15 +6182,9 @@ function initVisualPhysics(visual) {
     friction: getPhysicsFriction(memo),
     restX: visual.object?.position.x ?? 0,
     restZ: visual.object?.position.z ?? 0,
-    settled: false,
-    onDesk: false,
-    airborne: true,
-    homeY: clamp(
-      (visual.object?.position.y ?? PHYSICS_FLOAT_CENTER_Y) + (Math.random() * 1.8 - 0.9),
-      PHYSICS_FLOAT_MIN_Y + 0.1,
-      PHYSICS_FLOAT_MAX_Y - 0.1
-    ),
-    floatPhase: Math.random() * Math.PI * 2,
+    settled: true,
+    onDesk: landing.onDesk,
+    airborne: false,
   };
 }
 
@@ -6231,169 +6192,15 @@ function updatePhysics(delta) {
   if (!STATE.physicsEnabled) return;
   updateTiltSmoothing();
 
-  const floatModeActive = isFloatOrientationActive();
-  const now = performance.now();
+  const forceX = STATE.tilt.x;
+  const forceZ = STATE.tilt.z;
+  const hasForce = Math.abs(forceX) > 0.0003 || Math.abs(forceZ) > 0.0003;
 
   const memoMap = new Map();
   for (let i = 0; i < STATE.memos.length; i++) {
     const m = STATE.memos[i];
     if (m && m.id) memoMap.set(m.id, m);
   }
-
-  if (floatModeActive) {
-    const forceX = STATE.tilt.x * PHYSICS_FLOAT_TILT_BOOST;
-    const forceZ = STATE.tilt.z * PHYSICS_FLOAT_TILT_BOOST;
-    const hasForce = Math.abs(forceX) > 0.0003 || Math.abs(forceZ) > 0.0003;
-
-    const activeFloatVisuals = [];
-    STATE.visuals.forEach((visual) => {
-      if (visual.kind !== 'asset' || !visual.object || !visual.phys) return;
-      if (visual === STATE.grabbedVisual) return;
-      if (visual.dropIntro) return;
-      activeFloatVisuals.push(visual);
-    });
-
-    const sepImpulses = new Map();
-    for (let i = 0; i < activeFloatVisuals.length; i++) {
-      const a = activeFloatVisuals[i];
-      if (!sepImpulses.has(a)) sepImpulses.set(a, { x: 0, y: 0, z: 0 });
-      for (let j = i + 1; j < activeFloatVisuals.length; j++) {
-        const b = activeFloatVisuals[j];
-        if (!sepImpulses.has(b)) sepImpulses.set(b, { x: 0, y: 0, z: 0 });
-
-        const dx = a.object.position.x - b.object.position.x;
-        const dy = a.object.position.y - b.object.position.y;
-        const dz = a.object.position.z - b.object.position.z;
-        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-
-        if (dist < PHYSICS_FLOAT_COLLISION_RADIUS && dist > 0.001) {
-          const overlap = (PHYSICS_FLOAT_COLLISION_RADIUS - dist) / PHYSICS_FLOAT_COLLISION_RADIUS;
-          const strength = overlap * overlap * PHYSICS_FLOAT_COLLISION_FORCE;
-          const nx = dx / dist;
-          const ny = dy / dist;
-          const nz = dz / dist;
-
-          const impA = sepImpulses.get(a);
-          const impB = sepImpulses.get(b);
-
-          impA.x += nx * strength;
-          impA.y += ny * strength * 0.9;
-          impA.z += nz * strength;
-
-          impB.x -= nx * strength;
-          impB.y -= ny * strength * 0.9;
-          impB.z -= nz * strength;
-        }
-      }
-    }
-
-    STATE.visuals.forEach((visual) => {
-      if (visual.kind !== 'asset' || !visual.object || !visual.phys) return;
-      if (visual === STATE.grabbedVisual) return;
-      if (visual.dropIntro) return;
-
-      const p = visual.phys;
-      const memo = visual.memoIds?.length ? memoMap.get(visual.memoIds[0]) || null : null;
-      p.friction = getPhysicsFriction(memo);
-
-      if (!p.airborne) {
-        p.airborne = true;
-        p.onDesk = false;
-        p.settled = false;
-        p.vy = Math.max(p.vy, FLOAT_MODE_LIFT_VELOCITY);
-        p.homeY = clamp(
-          Math.max(
-            PHYSICS_FLOAT_CENTER_Y,
-            visual.object.position.y + 1.15 + Math.random() * 0.55
-          ),
-          PHYSICS_FLOAT_MIN_Y + 0.15,
-          PHYSICS_FLOAT_MAX_Y - 0.15
-        );
-      }
-
-      if (p.homeY == null) {
-        p.homeY = clamp(
-          (visual.object.position.y ?? PHYSICS_FLOAT_CENTER_Y) + (Math.random() * 1.8 - 0.9),
-          PHYSICS_FLOAT_MIN_Y + 0.1,
-          PHYSICS_FLOAT_MAX_Y - 0.1
-        );
-      }
-      if (p.floatPhase == null) p.floatPhase = Math.random() * Math.PI * 2;
-
-      const bobTargetY = clamp(
-        p.homeY + Math.sin(now * 0.001 + p.floatPhase) * 0.18,
-        PHYSICS_FLOAT_MIN_Y + 0.05,
-        PHYSICS_FLOAT_MAX_Y - 0.05
-      );
-
-      if (hasForce) {
-        p.vx += forceX * (1 - p.friction) * 1.45;
-        p.vz += forceZ * (1 - p.friction) * 1.45;
-      }
-
-      const sep = sepImpulses.get(visual);
-      if (sep && (Math.abs(sep.x) > 0.0001 || Math.abs(sep.y) > 0.0001 || Math.abs(sep.z) > 0.0001)) {
-        p.vx += sep.x;
-        p.vy += sep.y;
-        p.vz += sep.z;
-      }
-
-      p.vy += (bobTargetY - visual.object.position.y) * PHYSICS_FLOAT_BUOYANCY;
-
-      p.vx *= PHYSICS_FLOAT_DRAG;
-      p.vy *= PHYSICS_FLOAT_VERTICAL_DRAG;
-      p.vz *= PHYSICS_FLOAT_DRAG;
-
-      const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy + p.vz * p.vz);
-      if (speed > PHYSICS_FLOAT_MAX_SPEED) {
-        const scale = PHYSICS_FLOAT_MAX_SPEED / speed;
-        p.vx *= scale;
-        p.vy *= scale;
-        p.vz *= scale;
-      }
-
-      visual.object.position.x += p.vx;
-      visual.object.position.y += p.vy;
-      visual.object.position.z += p.vz;
-
-      const b = PHYSICS_ROOM_BOUNDS;
-      if (visual.object.position.x < b.minX) {
-        visual.object.position.x = b.minX;
-        p.vx *= -PHYSICS_BOUNCE_FACTOR;
-      }
-      if (visual.object.position.x > b.maxX) {
-        visual.object.position.x = b.maxX;
-        p.vx *= -PHYSICS_BOUNCE_FACTOR;
-      }
-      if (visual.object.position.z < b.minZ) {
-        visual.object.position.z = b.minZ;
-        p.vz *= -PHYSICS_BOUNCE_FACTOR;
-      }
-      if (visual.object.position.z > b.maxZ) {
-        visual.object.position.z = b.maxZ;
-        p.vz *= -PHYSICS_BOUNCE_FACTOR;
-      }
-
-      if (visual.object.position.y < PHYSICS_FLOAT_MIN_Y) {
-        visual.object.position.y = PHYSICS_FLOAT_MIN_Y;
-        p.vy = Math.abs(p.vy) * PHYSICS_FLOAT_Y_BOUNCE;
-      }
-      if (visual.object.position.y > PHYSICS_FLOAT_MAX_Y) {
-        visual.object.position.y = PHYSICS_FLOAT_MAX_Y;
-        p.vy = -Math.abs(p.vy) * PHYSICS_FLOAT_Y_BOUNCE;
-      }
-
-      p.restX = visual.object.position.x;
-      p.restZ = visual.object.position.z;
-      visual.object.updateMatrixWorld(true);
-    });
-
-    return;
-  }
-
-  const forceX = STATE.tilt.x;
-  const forceZ = STATE.tilt.z;
-  const hasForce = Math.abs(forceX) > 0.0003 || Math.abs(forceZ) > 0.0003;
 
   const activeDeskVisuals = [];
   STATE.visuals.forEach((visual) => {
@@ -6580,6 +6387,8 @@ function updatePhysics(delta) {
       return;
     }
 
+    const prevX = visual.object.position.x;
+    const prevZ = visual.object.position.z;
     visual.object.position.x += p.vx;
     visual.object.position.z += p.vz;
 
@@ -6684,7 +6493,7 @@ function setupInteraction() {
       lastX: event.clientX,
       lastY: event.clientY,
       lastTime: now,
-      liftY: Math.max(visual.object.position.y + 0.7, 1.0),
+      liftY: Math.max(visual.object.position.y + 2.4, 3.8),
     };
 
     STATE.grabState = gs;
@@ -6762,7 +6571,7 @@ function setupInteraction() {
     visual.phys.vx = clamp(throwVX, -PHYSICS_MAX_VELOCITY, PHYSICS_MAX_VELOCITY);
     visual.phys.vz = clamp(throwVZ, -PHYSICS_MAX_VELOCITY, PHYSICS_MAX_VELOCITY);
     const horizontalSpeed = Math.sqrt(visual.phys.vx * visual.phys.vx + visual.phys.vz * visual.phys.vz);
-    visual.phys.vy = Math.min(PHYSICS_THROW_UPWARD + horizontalSpeed * 0.05, 0.12);
+    visual.phys.vy = Math.min(PHYSICS_THROW_UPWARD + horizontalSpeed * 0.2, 0.42);
     visual.phys.airborne = true;
     visual.phys.onDesk = false;
     visual.phys.settled = false;
