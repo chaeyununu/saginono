@@ -6,6 +6,7 @@ import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 const STORAGE_KEY = 'mind-room-memos-v3';
 const STORAGE_PAYLOAD_VERSION = 4;
 const NON_DESK_SCALE_MULTIPLIER = 2;
+const GLOBAL_NON_DESK_VISUAL_SCALE_MULTIPLIER = 1.5;
 
 /* ═══ Physics & Interaction Constants ═══ */
 const PHYSICS_FRICTION_RECENT = 0.994;
@@ -42,6 +43,8 @@ const IDB_DB_NAME = 'mind-room-db';
 const IDB_STORE_NAME = 'app-data';
 const IDB_DB_VERSION = 1;
 const GOOGLE_BROWSER_PROMPT_SESSION_KEY = 'mind-room-google-browser-prompt-dismissed-v1';
+const RENDER_FREEZE_RELOAD_MS = 5000;
+const RENDER_FREEZE_MIN_UPTIME_MS = 4000;
 
 const SILENCE_MS = 1800;
 const SPEECH_FINALIZE_GRACE_MS = 240;
@@ -999,6 +1002,9 @@ const UI = {
 
 
 const STATE = {
+  startedAt: performance.now(),
+  lastFrameAt: performance.now(),
+  freezeReloadArmed: false,
   memos: [],
   selection: {
     category: '',
@@ -1551,6 +1557,25 @@ function hideBrowserRecommendationPrompt() {
 }
 
 
+
+function startRenderFreezeReloadWatchdog() {
+  window.setInterval(() => {
+    if (document.hidden) return;
+    const now = performance.now();
+    if (now - STATE.startedAt < RENDER_FREEZE_MIN_UPTIME_MS) return;
+    if (now - STATE.lastFrameAt < RENDER_FREEZE_RELOAD_MS) {
+      STATE.freezeReloadArmed = false;
+      return;
+    }
+    if (STATE.freezeReloadArmed) return;
+    STATE.freezeReloadArmed = true;
+    try {
+      sessionStorage.setItem('mind-room-auto-reloaded-on-freeze', String(Date.now()));
+    } catch (_) {}
+    window.location.reload();
+  }, 1000);
+}
+
 init();
 
 async function init() {
@@ -1565,6 +1590,7 @@ async function init() {
     renderCategoryChips();
     syncSelectionUI();
     syncAppViewportHeight();
+    startRenderFreezeReloadWatchdog();
     showBrowserRecommendationPrompt();
     setupScene();
 
@@ -2403,7 +2429,7 @@ function normalizeTemplate(root, key) {
   const center = box.getCenter(new THREE.Vector3());
   const maxDim = Math.max(size.x, size.y, size.z) || 1;
   const baseTargetMax = TARGET_MAX_DIMENSION[key] || 1;
-  const targetMax = key === 'desk' ? baseTargetMax : baseTargetMax * NON_DESK_SCALE_MULTIPLIER;
+  const targetMax = key === 'desk' ? baseTargetMax : baseTargetMax * NON_DESK_SCALE_MULTIPLIER * GLOBAL_NON_DESK_VISUAL_SCALE_MULTIPLIER;
   const scale = targetMax / maxDim;
 
   root.position.x -= center.x;
@@ -5503,6 +5529,7 @@ function hideMemoHover() {
 
 function startLoop() {
   const frame = () => {
+    STATE.lastFrameAt = performance.now();
     const delta = Math.min(STATE.clock.getDelta(), 0.033);
     const now = Date.now();
 
