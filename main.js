@@ -8,36 +8,36 @@ const STORAGE_PAYLOAD_VERSION = 4;
 const NON_DESK_SCALE_MULTIPLIER = 2;
 
 /* ═══ Physics & Interaction Constants ═══ */
-const PHYSICS_FRICTION_RECENT = 0.992;
+const PHYSICS_FRICTION_RECENT = 0.994;
 const PHYSICS_FRICTION_OLD = 0.42;
 const PHYSICS_FRICTION_MID = 0.78;
 const PHYSICS_AGE_RECENT_HOURS = 0.01;
 const PHYSICS_AGE_OLD_DAYS = 10;
 const PHYSICS_TILT_FORCE = 0.044;
-const PHYSICS_TILT_SMOOTHING = 0.22;
-const PHYSICS_REST_THRESHOLD = 0.0008;
+const PHYSICS_TILT_SMOOTHING = 0.18;
+const PHYSICS_REST_THRESHOLD = 0.0006;
 const PHYSICS_MAX_VELOCITY = 0.55;
-const PHYSICS_THROW_MULTIPLIER = 0.032;
+const PHYSICS_THROW_MULTIPLIER = 0.028;
 const PHYSICS_THROW_FRICTION = 0.92;
-const PHYSICS_BOUNCE_FACTOR = 0.45;
+const PHYSICS_BOUNCE_FACTOR = 0.38;
 const PHYSICS_ROOM_BOUNDS = { minX: -8.5, maxX: 8.5, minZ: -5.8, maxZ: 5.4 };
 const PHYSICS_SEPARATION_RADIUS = 1.75;
-const PHYSICS_SEPARATION_FORCE = 0.03;
+const PHYSICS_SEPARATION_FORCE = 0.025;
 const LONG_PRESS_MS = 0;
 const DRAG_DEAD_ZONE = 3;
-const DRAG_LERP = 0.55;
+const DRAG_LERP = 0.42;
 const MOBILE_VISIBLE_X_RANGE = 5.2;
 const PHYSICS_FLOOR_Y = 0.02;
-const PHYSICS_AIR_GRAVITY = 0.018;
+const PHYSICS_AIR_GRAVITY = 0.016;
 const PHYSICS_VERTICAL_BOUNCE = 0.2;
-const PHYSICS_THROW_UPWARD = 0.14;
-const PHYSICS_DESK_EDGE_FALL_SPEED = -0.035;
-const PHYSICS_FLOOR_ROLL_FRICTION = 0.965;
+const PHYSICS_THROW_UPWARD = 0.12;
+const PHYSICS_DESK_EDGE_FALL_SPEED = -0.028;
+const PHYSICS_FLOOR_ROLL_FRICTION = 0.96;
 const DESK_SURFACE_SIDE_INSET = 0.08;
 const DESK_SURFACE_BACK_INSET = 0.08;
 const DESK_SURFACE_FRONT_INSET = 0.72;
 const DESK_OBSTACLE_EPSILON = 0.02;
-const VELOCITY_HISTORY_SIZE = 6;
+const VELOCITY_HISTORY_SIZE = 8;
 const IDB_DB_NAME = 'mind-room-db';
 const IDB_STORE_NAME = 'app-data';
 const IDB_DB_VERSION = 1;
@@ -83,7 +83,7 @@ const DESK_TOP_ITEM_WORLD_COMP = {
 };
 
 const PREVIOUS_LAYOUT_CACHE_SLOT_MIGRATION_VERSION = 'non-desk-slot-baked-left-v2-right-tighten-floor-tumbler-inset-v5-floor-tumbler-bottom-right-extra-inset';
-const LAYOUT_CACHE_SLOT_MIGRATION_VERSION = 'non-desk-slot-baked-left-v2-right-tighten-floor-tumbler-inset-v7-floor-front-priority-v1-floor-tumbler-right-hard-inset-v2';
+const LAYOUT_CACHE_SLOT_MIGRATION_VERSION = 'non-desk-slot-baked-left-v2-right-tighten-floor-tumbler-inset-v7-floor-front-priority-v1-floor-tumbler-right-hard-inset-v2-tumbler-size-v2';
 const NON_DESK_SLOT_BAKED_X_SHIFT = -0.48;
 const RIGHT_SIDE_RANGE_TIGHTEN_START_X = 5.05;
 const RIGHT_SIDE_RANGE_TIGHTEN_EXTRA_START_X = 6.2;
@@ -139,7 +139,7 @@ const TARGET_MAX_DIMENSION = {
   strawberry: 0.92,
   jar: 0.59,
   burn: 0.99,
-  tumbler: 1.18,
+  tumbler: 1.72,
 };
 
 const FLOOR_ONLY_SCALE_MULTIPLIERS = Object.freeze({
@@ -150,7 +150,6 @@ const FLOOR_ONLY_SCALE_MULTIPLIERS = Object.freeze({
   strawberry: 1.16,
   jar: 1.14,
   burn: 1.16,
-  tumbler: 1.5,
   clothesFolded: 1.12,
   clothesScattered: 1.12,
 });
@@ -1697,8 +1696,12 @@ function setupUI() {
 
 function openEntryPanel() {
   closeDetailPanel();
-  UI.entryPanel.classList.remove('hidden');
+  // CSS transition handles animation (opacity + transform in style.css)
   UI.historyPanel.classList.add('hidden');
+  // Small delay to allow CSS to detect state change
+  requestAnimationFrame(() => {
+    UI.entryPanel.classList.remove('hidden');
+  });
 }
 
 function closeEntryPanel() {
@@ -1707,8 +1710,10 @@ function closeEntryPanel() {
 
 function openHistoryPanel() {
   closeDetailPanel();
-  UI.historyPanel.classList.remove('hidden');
   UI.entryPanel.classList.add('hidden');
+  requestAnimationFrame(() => {
+    UI.historyPanel.classList.remove('hidden');
+  });
 }
 
 function closeHistoryPanel() {
@@ -2132,15 +2137,16 @@ function setupScene() {
   STATE.renderer.outputColorSpace = THREE.SRGBColorSpace;
   STATE.renderer.shadowMap.enabled = true;
   STATE.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  STATE.renderer.toneMappingExposure = 1.08;
+  STATE.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  STATE.renderer.toneMappingExposure = 1.12;
   UI.sceneRoot.innerHTML = '';
   UI.sceneRoot.appendChild(STATE.renderer.domElement);
 
-  const hemi = new THREE.HemisphereLight(0xfffbf4, 0xe9dfd3, 1.7);
+  const hemi = new THREE.HemisphereLight(0xfffbf4, 0xe9dfd3, 1.85);
   STATE.scene.add(hemi);
 
   const shadowMapRes = isMobile ? 1024 : 2048;
-  const key = new THREE.DirectionalLight(0xffe2c6, 1.9);
+  const key = new THREE.DirectionalLight(0xffe2c6, 2.05);
   key.position.set(5.6, 9.5, 6.4);
   key.castShadow = true;
   key.shadow.mapSize.set(shadowMapRes, shadowMapRes);
@@ -2152,11 +2158,11 @@ function setupScene() {
   key.shadow.camera.far = 40;
   STATE.scene.add(key);
 
-  const fill = new THREE.PointLight(0xfff0e0, 12, 30, 2.0);
+  const fill = new THREE.PointLight(0xfff0e0, 14, 32, 2.0);
   fill.position.set(-6, 3.6, 1.5);
   STATE.scene.add(fill);
 
-  const backGlow = new THREE.PointLight(0xfff8ef, 8.5, 24, 2.0);
+  const backGlow = new THREE.PointLight(0xfff8ef, 10, 26, 2.0);
   backGlow.position.set(1, 4.2, -5.2);
   STATE.scene.add(backGlow);
 
@@ -4269,14 +4275,19 @@ function updateAssetDropVisual(visual, now) {
   if (!visual.dropIntro || !visual.object) return true;
 
   const intro = visual.dropIntro;
-  const progress = clamp((now - intro.startedAt) / intro.duration, 0, 1);
-  const eased = 1 - Math.pow(1 - progress, 3);
-  const overshoot = Math.sin(progress * Math.PI) * 0.07 * (1 - progress);
+  const rawProgress = clamp((now - intro.startedAt) / intro.duration, 0, 1);
 
-  visual.object.position.y = THREE.MathUtils.lerp(intro.fromY, intro.toY, eased) - overshoot;
+  // Spring-bounce easing for natural feel
+  const springEased = rawProgress < 1
+    ? 1 - Math.pow(2, -10 * rawProgress) * Math.cos((rawProgress * 10 - 0.75) * ((2 * Math.PI) / 3))
+    : 1;
+
+  const progress = clamp(springEased, 0, 1.08);
+
+  visual.object.position.y = THREE.MathUtils.lerp(intro.fromY, intro.toY, Math.min(progress, 1));
   visual.object.updateMatrixWorld(true);
 
-  if (progress >= 1) {
+  if (rawProgress >= 1) {
     visual.object.position.y = intro.toY;
     visual.object.updateMatrixWorld(true);
     visual.dropIntro = null;
@@ -4319,7 +4330,7 @@ function pickSlot(slotList, occupied, minDistance, seedOffset = 0) {
 }
 
 function createEmotionParticleSystem(memo, tone, anchor) {
-  const count = tone === 'good' ? 84 : 70;
+  const count = tone === 'good' ? 120 : 96;
   const positions = new Float32Array(count * 3);
   const basePositions = new Float32Array(count * 3);
   const velocity = new Float32Array(count * 3);
@@ -4355,7 +4366,7 @@ function createEmotionParticleSystem(memo, tone, anchor) {
 
   const material = new THREE.PointsMaterial({
     color,
-    size: tone === 'good' ? 0.13 : 0.1,
+    size: tone === 'good' ? 0.11 : 0.08,
     sizeAttenuation: true,
     transparent: true,
     opacity: tone === 'good' ? 0.9 : 0.78,
@@ -4393,9 +4404,10 @@ function updateParticleVisual(visual, delta, now) {
     const seed = visual.seeds[i];
 
     if (visual.tone === 'good') {
-      positions[stride] = visual.basePositions[stride] + Math.sin(now * 0.0013 + seed) * 0.04;
-      positions[stride + 1] = visual.basePositions[stride + 1] + Math.cos(now * 0.0011 + seed) * 0.06;
-      positions[stride + 2] = visual.basePositions[stride + 2] + Math.sin(now * 0.0012 + seed * 0.7) * 0.04;
+      const orbitSpeed = 0.0008 + seed * 0.00012;
+      positions[stride] = visual.basePositions[stride] + Math.sin(now * orbitSpeed + seed) * 0.06;
+      positions[stride + 1] = visual.basePositions[stride + 1] + Math.cos(now * (orbitSpeed * 0.85) + seed) * 0.08 + Math.sin(now * 0.0005 + seed * 1.3) * 0.03;
+      positions[stride + 2] = visual.basePositions[stride + 2] + Math.sin(now * (orbitSpeed * 0.92) + seed * 0.7) * 0.06;
     } else {
       positions[stride] += visual.velocity[stride] * delta * 9;
       positions[stride + 1] += visual.velocity[stride + 1] * delta * 9;
@@ -5342,6 +5354,8 @@ function renderHistory() {
     const statusChip = memo.clearedAt
       ? '<span class="log-chip log-chip-success">정리</span>'
       : '<span class="log-chip log-chip-outline">활성</span>';
+    const ageDays = getAgeDays(memo.createdAt, Date.now());
+    const ageLabel = ageDays < 1 ? '오늘' : ageDays < 2 ? '어제' : `${Math.floor(ageDays)}일 전`;
 
     card.innerHTML = `
       <div class="log-top">
@@ -5349,6 +5363,7 @@ function renderHistory() {
           <strong class="log-title">${escapeHtml(categoryLabel + emotionLabel)}</strong>
           <div class="log-chip-row">
             ${statusChip}
+            <span class="log-chip">${escapeHtml(ageLabel)}</span>
             <span class="log-chip">${escapeHtml(formatDate(memo.createdAt))}</span>
           </div>
         </div>
@@ -5564,17 +5579,21 @@ function buildVisualSignature() {
 
 function updateCamera(delta) {
   const isMobile = (window.innerWidth || 768) < 768;
+  const smoothFactor = 1 - Math.pow(0.08, delta); // frame-rate independent smoothing
+
   if (isMobile) {
     const baseX = -0.2;
     const baseY = 7.2;
-    STATE.camera.position.x = THREE.MathUtils.lerp(STATE.camera.position.x, baseX + STATE.pointer.x * 0.1, delta * 1.2);
-    STATE.camera.position.y = THREE.MathUtils.lerp(STATE.camera.position.y, baseY + STATE.pointer.y * 0.05, delta * 1.2);
+    const targetX = baseX + STATE.pointer.x * 0.08;
+    const targetY = baseY + STATE.pointer.y * 0.04;
+    STATE.camera.position.x += (targetX - STATE.camera.position.x) * smoothFactor;
+    STATE.camera.position.y += (targetY - STATE.camera.position.y) * smoothFactor;
     STATE.camera.lookAt(-0.2, 1.0, -2.2);
   } else {
-    const targetX = -0.55 + STATE.pointer.x * 0.22;
-    const targetY = 5.1 + STATE.pointer.y * 0.12;
-    STATE.camera.position.x = THREE.MathUtils.lerp(STATE.camera.position.x, targetX, delta * 1.5);
-    STATE.camera.position.y = THREE.MathUtils.lerp(STATE.camera.position.y, targetY, delta * 1.5);
+    const targetX = -0.55 + STATE.pointer.x * 0.18;
+    const targetY = 5.1 + STATE.pointer.y * 0.1;
+    STATE.camera.position.x += (targetX - STATE.camera.position.x) * smoothFactor;
+    STATE.camera.position.y += (targetY - STATE.camera.position.y) * smoothFactor;
     STATE.camera.lookAt(-0.55, 1.35, -2.35);
   }
 }
@@ -6447,7 +6466,7 @@ function setupInteraction() {
       lastX: event.clientX,
       lastY: event.clientY,
       lastTime: now,
-      liftY: Math.max(visual.object.position.y + 0.9, 1.2),
+      liftY: Math.max(visual.object.position.y + 0.7, 1.0),
     };
 
     STATE.grabState = gs;
@@ -6480,9 +6499,10 @@ function setupInteraction() {
       const maxX = isMobileViewport ? Math.min(PHYSICS_ROOM_BOUNDS.maxX, MOBILE_VISIBLE_X_RANGE) : PHYSICS_ROOM_BOUNDS.maxX;
       const targetX = clamp(floorPos.x, minX, maxX);
       const targetZ = clamp(floorPos.z, PHYSICS_ROOM_BOUNDS.minZ, PHYSICS_ROOM_BOUNDS.maxZ);
-      visual.object.position.x = THREE.MathUtils.lerp(visual.object.position.x, targetX, DRAG_LERP);
-      visual.object.position.z = THREE.MathUtils.lerp(visual.object.position.z, targetZ, DRAG_LERP);
-      visual.object.position.y = THREE.MathUtils.lerp(visual.object.position.y, gs.liftY, DRAG_LERP);
+      const frameLerp = 1 - Math.pow(1 - DRAG_LERP, 1);
+      visual.object.position.x = THREE.MathUtils.lerp(visual.object.position.x, targetX, frameLerp);
+      visual.object.position.z = THREE.MathUtils.lerp(visual.object.position.z, targetZ, frameLerp);
+      visual.object.position.y = THREE.MathUtils.lerp(visual.object.position.y, gs.liftY, frameLerp * 0.8);
       visual.object.updateMatrixWorld(true);
     }
 
@@ -6524,7 +6544,7 @@ function setupInteraction() {
     visual.phys.vx = clamp(throwVX, -PHYSICS_MAX_VELOCITY, PHYSICS_MAX_VELOCITY);
     visual.phys.vz = clamp(throwVZ, -PHYSICS_MAX_VELOCITY, PHYSICS_MAX_VELOCITY);
     const horizontalSpeed = Math.sqrt(visual.phys.vx * visual.phys.vx + visual.phys.vz * visual.phys.vz);
-    visual.phys.vy = Math.min(PHYSICS_THROW_UPWARD + horizontalSpeed * 0.12, 0.24);
+    visual.phys.vy = Math.min(PHYSICS_THROW_UPWARD + horizontalSpeed * 0.08, 0.2);
     visual.phys.airborne = true;
     visual.phys.onDesk = false;
     visual.phys.settled = false;
@@ -6885,4 +6905,4 @@ function createTumblerFallback() {
   group.add(lid);
 
   return group;
-}v
+}
