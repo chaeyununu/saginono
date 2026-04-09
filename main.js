@@ -48,7 +48,8 @@ const IDB_DB_VERSION = 1;
 const GOOGLE_BROWSER_PROMPT_SESSION_KEY = 'mind-room-google-browser-prompt-dismissed-v1';
 const RENDER_FREEZE_RELOAD_MS = 5000;
 const RENDER_FREEZE_MIN_UPTIME_MS = 4000;
-const IDLE_FLOAT_DELAY_MS = 1500;
+const IDLE_FLOAT_DELAY_MS = 10000;
+const IDLE_SINK_GRAVITY = 0.0045;
 const IDLE_FLOAT_MIN_Y = 2.6;
 const IDLE_FLOAT_MAX_Y = 5.6;
 const IDLE_FLOAT_LERP = 0.028;
@@ -6254,6 +6255,7 @@ function updateIdleFloatVisuals(delta) {
     p.airborne = true;
     p.onDesk = false;
     p.settled = false;
+    p.idleFloating = true;
 
     visual.object.position.x = THREE.MathUtils.lerp(visual.object.position.x, tx, 0.06);
     visual.object.position.y = THREE.MathUtils.lerp(visual.object.position.y, ty, 0.08);
@@ -6340,7 +6342,10 @@ function updatePhysics(delta) {
       const prevY = visual.object.position.y;
       const prevZ = visual.object.position.z;
 
-      p.vy -= PHYSICS_AIR_GRAVITY;
+      const fallGravity = p.idleFloating ? IDLE_SINK_GRAVITY : PHYSICS_AIR_GRAVITY;
+      p.vx *= p.idleFloating ? 0.985 : 1;
+      p.vz *= p.idleFloating ? 0.985 : 1;
+      p.vy -= fallGravity;
       visual.object.position.x += p.vx;
       visual.object.position.y += p.vy;
       visual.object.position.z += p.vz;
@@ -6366,6 +6371,7 @@ function updatePhysics(delta) {
         p.restX = visual.object.position.x;
         p.restZ = visual.object.position.z;
         p.settled = false;
+        p.idleFloating = false;
         visual.object.updateMatrixWorld(true);
         return;
       }
@@ -6378,6 +6384,7 @@ function updatePhysics(delta) {
         p.restX = visual.object.position.x;
         p.restZ = visual.object.position.z;
         p.settled = false;
+        p.idleFloating = false;
         visual.object.updateMatrixWorld(true);
         return;
       }
