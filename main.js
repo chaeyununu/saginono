@@ -27,6 +27,9 @@ const PHYSICS_SEPARATION_FORCE = 0.025;
 const LONG_PRESS_MS = 0;
 const DRAG_DEAD_ZONE = 3;
 const DRAG_LERP = 0.42;
+const DRAG_LIFT_MIN_Y = 1.0;
+const DRAG_LIFT_MAX_Y = 8.2;
+const DRAG_LIFT_SCREEN_GAIN = 6.6;
 const MOBILE_VISIBLE_X_RANGE = 5.2;
 const PHYSICS_FLOOR_Y = 0.02;
 const PHYSICS_AIR_GRAVITY = 0.016;
@@ -45,6 +48,12 @@ const IDB_DB_VERSION = 1;
 const GOOGLE_BROWSER_PROMPT_SESSION_KEY = 'mind-room-google-browser-prompt-dismissed-v1';
 const RENDER_FREEZE_RELOAD_MS = 5000;
 const RENDER_FREEZE_MIN_UPTIME_MS = 4000;
+const IDLE_FLOAT_DELAY_MS = 3200;
+const IDLE_FLOAT_MIN_Y = 2.6;
+const IDLE_FLOAT_MAX_Y = 5.6;
+const IDLE_FLOAT_LERP = 0.028;
+const IDLE_FLOAT_BOB_AMPLITUDE = 0.14;
+const IDLE_FLOAT_BOB_SPEED = 0.0011;
 
 const SILENCE_MS = 1800;
 const SPEECH_FINALIZE_GRACE_MS = 240;
@@ -1004,6 +1013,7 @@ const UI = {
 const STATE = {
   startedAt: performance.now(),
   lastFrameAt: performance.now(),
+  lastInteractionAt: performance.now(),
   freezeReloadArmed: false,
   memos: [],
   selection: {
@@ -1861,6 +1871,7 @@ function renderCategoryChips() {
     button.dataset.category = category;
     button.textContent = info.label;
     button.addEventListener('click', () => {
+      markUserInteraction();
       STATE.selection.category = category;
       syncSelectionUI();
     });
@@ -6066,6 +6077,7 @@ function updateTiltSmoothing() {
   const targetZ = clamp((STATE.tilt.rawBeta - 45) / 30, -1, 1) * PHYSICS_TILT_FORCE;
   STATE.tilt.x += (targetX - STATE.tilt.x) * PHYSICS_TILT_SMOOTHING;
   STATE.tilt.z += (targetZ - STATE.tilt.z) * PHYSICS_TILT_SMOOTHING;
+  if (Math.abs(targetX) > 0.0018 || Math.abs(targetZ) > 0.0018) markUserInteraction();
 }
 
 /* ═══ Physics System ═══ */
@@ -6188,6 +6200,68 @@ function initVisualPhysics(visual) {
   };
 }
 
+function markUserInteraction() {
+  STATE.lastInteractionAt = performance.now();
+}
+
+function isIdleFloatModeActive(hasForce) {
+  if (STATE.grabbedVisual || STATE.grabState?.isDragging) return false;
+  if (!UI.entryPanel.classList.contains('hidden') || !UI.historyPanel.classList.contains('hidden')) return false;
+  if (STATE.isListening) return false;
+  if (hasForce) return false;
+  return (performance.now() - (STATE.lastInteractionAt || 0)) >= IDLE_FLOAT_DELAY_MS;
+}
+
+function updateIdleFloatVisuals(delta) {
+  const floatVisuals = STATE.visuals.filter((visual) =>
+    visual.kind === 'asset' &&
+    visual.object &&
+    visual.phys &&
+    visual !== STATE.grabbedVisual &&
+    !visual.dropIntro
+  );
+
+  const count = floatVisuals.length;
+  if (!count) return;
+
+  const now = performance.now();
+  const columns = Math.max(3, Math.ceil(Math.sqrt(count * 1.35)));
+  const rows = Math.max(1, Math.ceil(count / columns));
+  const usableMinX = PHYSICS_ROOM_BOUNDS.minX + 0.9;
+  const usableMaxX = PHYSICS_ROOM_BOUNDS.maxX - 0.9;
+  const usableMinZ = PHYSICS_ROOM_BOUNDS.minZ + 0.8;
+  const usableMaxZ = PHYSICS_ROOM_BOUNDS.maxZ - 0.8;
+  const xSpan = usableMaxX - usableMinX;
+  const zSpan = usableMaxZ - usableMinZ;
+
+  floatVisuals.forEach((visual, index) => {
+    const p = visual.phys;
+    if (!p.idleFloatPhase) p.idleFloatPhase = Math.random() * Math.PI * 2;
+    if (!p.idleFloatOffset) p.idleFloatOffset = (Math.random() - 0.5) * 0.22;
+
+    const col = index % columns;
+    const row = Math.floor(index / columns);
+
+    const tx = usableMinX + (columns === 1 ? 0.5 : col / (columns - 1)) * xSpan;
+    const tz = usableMinZ + (rows === 1 ? 0.5 : row / (rows - 1)) * zSpan;
+    const layerT = rows <= 1 ? 0.5 : row / Math.max(rows - 1, 1);
+    const baseY = THREE.MathUtils.lerp(IDLE_FLOAT_MAX_Y, IDLE_FLOAT_MIN_Y, layerT);
+    const ty = baseY + Math.sin(now * IDLE_FLOAT_BOB_SPEED + p.idleFloatPhase) * IDLE_FLOAT_BOB_AMPLITUDE + p.idleFloatOffset;
+
+    p.vx *= 0.9;
+    p.vy *= 0.88;
+    p.vz *= 0.9;
+    p.airborne = true;
+    p.onDesk = false;
+    p.settled = false;
+
+    visual.object.position.x = THREE.MathUtils.lerp(visual.object.position.x, tx, IDLE_FLOAT_LERP);
+    visual.object.position.y = THREE.MathUtils.lerp(visual.object.position.y, ty, IDLE_FLOAT_LERP * 0.9);
+    visual.object.position.z = THREE.MathUtils.lerp(visual.object.position.z, tz, IDLE_FLOAT_LERP);
+    visual.object.updateMatrixWorld(true);
+  });
+}
+
 function updatePhysics(delta) {
   if (!STATE.physicsEnabled) return;
   updateTiltSmoothing();
@@ -6195,6 +6269,11 @@ function updatePhysics(delta) {
   const forceX = STATE.tilt.x;
   const forceZ = STATE.tilt.z;
   const hasForce = Math.abs(forceX) > 0.0003 || Math.abs(forceZ) > 0.0003;
+
+  if (isIdleFloatModeActive(hasForce)) {
+    updateIdleFloatVisuals(delta);
+    return;
+  }
 
   const memoMap = new Map();
   for (let i = 0; i < STATE.memos.length; i++) {
@@ -6466,6 +6545,13 @@ function setupInteraction() {
     return null;
   }
 
+function getDragLiftY(clientY, baseY = 0) {
+  const vh = Math.max(window.innerHeight || 1, 1);
+  const topRatio = 1 - clamp(clientY / vh, 0, 1);
+  const liftedBase = Math.max(baseY + 0.7, DRAG_LIFT_MIN_Y);
+  return clamp(liftedBase + topRatio * DRAG_LIFT_SCREEN_GAIN, DRAG_LIFT_MIN_Y, DRAG_LIFT_MAX_Y);
+}
+
   function getFloorPosition(clientX, clientY, yOverride) {
     const ndc = getNDC(clientX, clientY);
     pointerRay.setFromCamera(ndc, STATE.camera);
@@ -6476,6 +6562,7 @@ function setupInteraction() {
   }
 
   function onPointerDown(event) {
+    markUserInteraction();
     if (event.button && event.button !== 0) return;
     if (!UI.entryPanel.classList.contains('hidden') || !UI.historyPanel.classList.contains('hidden')) return;
 
@@ -6493,7 +6580,7 @@ function setupInteraction() {
       lastX: event.clientX,
       lastY: event.clientY,
       lastTime: now,
-      liftY: Math.max(visual.object.position.y + 2.4, 3.8),
+      liftY: getDragLiftY(event.clientY, visual.object.position.y),
     };
 
     STATE.grabState = gs;
@@ -6510,6 +6597,7 @@ function setupInteraction() {
   }
 
   function onPointerMove(event) {
+    markUserInteraction();
     if (!STATE.grabState) return;
     const gs = STATE.grabState;
     const visual = STATE.grabbedVisual;
@@ -6519,6 +6607,7 @@ function setupInteraction() {
     const dy = event.clientY - gs.startY;
     const movedEnough = Math.sqrt(dx * dx + dy * dy) >= DRAG_DEAD_ZONE;
 
+    gs.liftY = getDragLiftY(event.clientY, visual.object.position.y);
     const floorPos = getFloorPosition(event.clientX, event.clientY, gs.liftY);
     if (floorPos && movedEnough) {
       const isMobileViewport = window.innerWidth < 768;
@@ -6542,6 +6631,7 @@ function setupInteraction() {
   }
 
   function onPointerUp(event) {
+    markUserInteraction();
     const gs = STATE.grabState;
     STATE.grabState = null;
     canvas.style.cursor = '';
@@ -6571,7 +6661,7 @@ function setupInteraction() {
     visual.phys.vx = clamp(throwVX, -PHYSICS_MAX_VELOCITY, PHYSICS_MAX_VELOCITY);
     visual.phys.vz = clamp(throwVZ, -PHYSICS_MAX_VELOCITY, PHYSICS_MAX_VELOCITY);
     const horizontalSpeed = Math.sqrt(visual.phys.vx * visual.phys.vx + visual.phys.vz * visual.phys.vz);
-    visual.phys.vy = Math.min(PHYSICS_THROW_UPWARD + horizontalSpeed * 0.2, 0.42);
+    visual.phys.vy = Math.min(PHYSICS_THROW_UPWARD + horizontalSpeed * 0.08, 0.2);
     visual.phys.airborne = true;
     visual.phys.onDesk = false;
     visual.phys.settled = false;
@@ -6586,6 +6676,7 @@ function setupInteraction() {
   }
 
   function onPointerCancel(event) {
+    markUserInteraction();
     if (STATE.grabbedVisual && STATE.grabbedVisual.object && STATE.grabbedVisual.phys) {
       settleVisualAtCurrentXZ(STATE.grabbedVisual);
     }
@@ -6602,6 +6693,7 @@ function setupInteraction() {
   canvas.addEventListener('touchmove', (e) => {
     if (STATE.grabState?.isDragging) e.preventDefault();
   }, { passive: false });
+  canvas.addEventListener('pointerenter', markUserInteraction, { passive: true });
 }
 
 function persistStorage() {
