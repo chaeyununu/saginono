@@ -125,7 +125,7 @@ const CATEGORY_INFO = {
 const ASSET_FILES = {
   desk: 'desko.glb',
   note: 'note.glb',
-  scribble: 'scribble_note.glb',
+  scribble: 'note.glb',
   clothesFolded: 'clothes_folded.glb',
   clothesScattered: 'clothes_scatteredo.glb',
   paperSingle: 'paper_single.glb',
@@ -141,7 +141,7 @@ const ASSET_FILES = {
 const TARGET_MAX_DIMENSION = {
   desk: 7.75,
   note: 1.64,
-  scribble: 1.98,
+  scribble: 1.64,
   clothesFolded: 1.12,
   clothesScattered: 1.4,
   paperSingle: 0.58,
@@ -4630,8 +4630,8 @@ function createAndAttachRecordVisual(memo, animateMemoId = null) {
 
   const layoutKey = getRecordLayoutKey(memo);
   const cachedLayout = getLayoutCacheEntry(layoutKey);
-  const useScribble = cachedLayout ? cachedLayout.assetKey === 'scribble' : (getMemoStableHash(memo, 'record-variant') % 3 === 2);
-  const key = useScribble ? 'scribble' : 'note';
+  const useScribble = false;
+  const key = 'note';
   const instance = createAssetInstance(key);
   const shouldPlayDropIntro = memo.id === animateMemoId && !cachedLayout;
   let deskNoteCount = context.deskNoteCount;
@@ -5484,7 +5484,7 @@ function describeVisualState(memo) {
   }
 
   if (memo.category === 'record') {
-    return '책상 위 note 또는 scribble note 오브젝트로 표시돼';
+    return '책상 위 note 오브젝트로 표시돼';
   }
 
   if (memo.category === 'clutter') {
@@ -6077,7 +6077,6 @@ function updateTiltSmoothing() {
   const targetZ = clamp((STATE.tilt.rawBeta - 45) / 30, -1, 1) * PHYSICS_TILT_FORCE;
   STATE.tilt.x += (targetX - STATE.tilt.x) * PHYSICS_TILT_SMOOTHING;
   STATE.tilt.z += (targetZ - STATE.tilt.z) * PHYSICS_TILT_SMOOTHING;
-  if (Math.abs(targetX) > 0.0018 || Math.abs(targetZ) > 0.0018) markUserInteraction();
 }
 
 /* ═══ Physics System ═══ */
@@ -6208,7 +6207,8 @@ function isIdleFloatModeActive(hasForce) {
   if (STATE.grabbedVisual || STATE.grabState?.isDragging) return false;
   if (!UI.entryPanel.classList.contains('hidden') || !UI.historyPanel.classList.contains('hidden')) return false;
   if (STATE.isListening) return false;
-  if (hasForce) return false;
+  const strongTilt = Math.abs(STATE.tilt.x) > 0.035 || Math.abs(STATE.tilt.z) > 0.035;
+  if (strongTilt) return false;
   return (performance.now() - (STATE.lastInteractionAt || 0)) >= IDLE_FLOAT_DELAY_MS;
 }
 
@@ -6545,11 +6545,11 @@ function setupInteraction() {
     return null;
   }
 
-function getDragLiftY(clientY, baseY = 0) {
-  const vh = Math.max(window.innerHeight || 1, 1);
-  const topRatio = 1 - clamp(clientY / vh, 0, 1);
-  const liftedBase = Math.max(baseY + 0.7, DRAG_LIFT_MIN_Y);
-  return clamp(liftedBase + topRatio * DRAG_LIFT_SCREEN_GAIN, DRAG_LIFT_MIN_Y, DRAG_LIFT_MAX_Y);
+function getDragLiftY(startClientY, currentClientY, baseY = 0) {
+  const upwardDrag = Math.max(0, startClientY - currentClientY);
+  const liftGain = upwardDrag * 0.018;
+  const liftedBase = Math.max(baseY, DRAG_LIFT_MIN_Y);
+  return clamp(liftedBase + liftGain, DRAG_LIFT_MIN_Y, DRAG_LIFT_MAX_Y);
 }
 
   function getFloorPosition(clientX, clientY, yOverride) {
@@ -6580,7 +6580,8 @@ function getDragLiftY(clientY, baseY = 0) {
       lastX: event.clientX,
       lastY: event.clientY,
       lastTime: now,
-      liftY: getDragLiftY(event.clientY, visual.object.position.y),
+      baseLiftY: Math.max(visual.object.position.y, DRAG_LIFT_MIN_Y),
+      liftY: Math.max(visual.object.position.y, DRAG_LIFT_MIN_Y),
     };
 
     STATE.grabState = gs;
@@ -6607,7 +6608,7 @@ function getDragLiftY(clientY, baseY = 0) {
     const dy = event.clientY - gs.startY;
     const movedEnough = Math.sqrt(dx * dx + dy * dy) >= DRAG_DEAD_ZONE;
 
-    gs.liftY = getDragLiftY(event.clientY, visual.object.position.y);
+    gs.liftY = getDragLiftY(gs.startY, event.clientY, gs.baseLiftY ?? visual.object.position.y);
     const floorPos = getFloorPosition(event.clientX, event.clientY, gs.liftY);
     if (floorPos && movedEnough) {
       const isMobileViewport = window.innerWidth < 768;
