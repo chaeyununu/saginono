@@ -48,7 +48,7 @@ const IDB_DB_VERSION = 1;
 const GOOGLE_BROWSER_PROMPT_SESSION_KEY = 'mind-room-google-browser-prompt-dismissed-v1';
 const RENDER_FREEZE_RELOAD_MS = 5000;
 const RENDER_FREEZE_MIN_UPTIME_MS = 4000;
-const IDLE_FLOAT_DELAY_MS = 3200;
+const IDLE_FLOAT_DELAY_MS = 1500;
 const IDLE_FLOAT_MIN_Y = 2.6;
 const IDLE_FLOAT_MAX_Y = 5.6;
 const IDLE_FLOAT_LERP = 0.028;
@@ -6205,27 +6205,26 @@ function markUserInteraction() {
 
 function isIdleFloatModeActive(hasForce) {
   if (STATE.grabbedVisual || STATE.grabState?.isDragging) return false;
-  if (!UI.entryPanel.classList.contains('hidden') || !UI.historyPanel.classList.contains('hidden')) return false;
   if (STATE.isListening) return false;
-  const strongTilt = Math.abs(STATE.tilt.x) > 0.035 || Math.abs(STATE.tilt.z) > 0.035;
-  if (strongTilt) return false;
+  const entryOpen = UI.entryPanel && !UI.entryPanel.classList.contains('hidden');
+  const historyOpen = UI.historyPanel && !UI.historyPanel.classList.contains('hidden');
+  if (entryOpen || historyOpen) return false;
   return (performance.now() - (STATE.lastInteractionAt || 0)) >= IDLE_FLOAT_DELAY_MS;
 }
 
 function updateIdleFloatVisuals(delta) {
-  const floatVisuals = STATE.visuals.filter((visual) =>
+  const assetVisuals = STATE.visuals.filter((visual) =>
     visual.kind === 'asset' &&
     visual.object &&
-    visual.phys &&
     visual !== STATE.grabbedVisual &&
     !visual.dropIntro
   );
 
-  const count = floatVisuals.length;
+  const count = assetVisuals.length;
   if (!count) return;
 
   const now = performance.now();
-  const columns = Math.max(3, Math.ceil(Math.sqrt(count * 1.35)));
+  const columns = Math.max(3, Math.ceil(Math.sqrt(count * 1.4)));
   const rows = Math.max(1, Math.ceil(count / columns));
   const usableMinX = PHYSICS_ROOM_BOUNDS.minX + 0.9;
   const usableMaxX = PHYSICS_ROOM_BOUNDS.maxX - 0.9;
@@ -6234,10 +6233,11 @@ function updateIdleFloatVisuals(delta) {
   const xSpan = usableMaxX - usableMinX;
   const zSpan = usableMaxZ - usableMinZ;
 
-  floatVisuals.forEach((visual, index) => {
+  assetVisuals.forEach((visual, index) => {
+    if (!visual.phys) initVisualPhysics(visual);
     const p = visual.phys;
     if (!p.idleFloatPhase) p.idleFloatPhase = Math.random() * Math.PI * 2;
-    if (!p.idleFloatOffset) p.idleFloatOffset = (Math.random() - 0.5) * 0.22;
+    if (!p.idleFloatOffset) p.idleFloatOffset = (Math.random() - 0.5) * 0.28;
 
     const col = index % columns;
     const row = Math.floor(index / columns);
@@ -6248,16 +6248,16 @@ function updateIdleFloatVisuals(delta) {
     const baseY = THREE.MathUtils.lerp(IDLE_FLOAT_MAX_Y, IDLE_FLOAT_MIN_Y, layerT);
     const ty = baseY + Math.sin(now * IDLE_FLOAT_BOB_SPEED + p.idleFloatPhase) * IDLE_FLOAT_BOB_AMPLITUDE + p.idleFloatOffset;
 
-    p.vx *= 0.9;
-    p.vy *= 0.88;
-    p.vz *= 0.9;
+    p.vx = 0;
+    p.vy = 0;
+    p.vz = 0;
     p.airborne = true;
     p.onDesk = false;
     p.settled = false;
 
-    visual.object.position.x = THREE.MathUtils.lerp(visual.object.position.x, tx, IDLE_FLOAT_LERP);
-    visual.object.position.y = THREE.MathUtils.lerp(visual.object.position.y, ty, IDLE_FLOAT_LERP * 0.9);
-    visual.object.position.z = THREE.MathUtils.lerp(visual.object.position.z, tz, IDLE_FLOAT_LERP);
+    visual.object.position.x = THREE.MathUtils.lerp(visual.object.position.x, tx, 0.06);
+    visual.object.position.y = THREE.MathUtils.lerp(visual.object.position.y, ty, 0.08);
+    visual.object.position.z = THREE.MathUtils.lerp(visual.object.position.z, tz, 0.06);
     visual.object.updateMatrixWorld(true);
   });
 }
@@ -6695,6 +6695,11 @@ function getDragLiftY(startClientY, currentClientY, baseY = 0) {
     if (STATE.grabState?.isDragging) e.preventDefault();
   }, { passive: false });
   canvas.addEventListener('pointerenter', markUserInteraction, { passive: true });
+  window.addEventListener('touchstart', markUserInteraction, { passive: true });
+  window.addEventListener('touchmove', markUserInteraction, { passive: true });
+  window.addEventListener('mousedown', markUserInteraction, { passive: true });
+  window.addEventListener('wheel', markUserInteraction, { passive: true });
+  window.addEventListener('keydown', markUserInteraction, { passive: true });
 }
 
 function persistStorage() {
