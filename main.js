@@ -49,6 +49,7 @@ const GOOGLE_BROWSER_PROMPT_SESSION_KEY = 'mind-room-google-browser-prompt-dismi
 const RENDER_FREEZE_RELOAD_MS = 5000;
 const RENDER_FREEZE_MIN_UPTIME_MS = 4000;
 const IDLE_FLOAT_DELAY_MS = 10000;
+const IDLE_FLOAT_STARTUP_BLOCK_MS = 30000;
 const IDLE_SINK_GRAVITY = 0.0045;
 const IDLE_FLOAT_MIN_Y = 2.6;
 const IDLE_FLOAT_MAX_Y = 5.6;
@@ -6207,6 +6208,8 @@ function markUserInteraction() {
 function isIdleFloatModeActive(hasForce) {
   if (STATE.grabbedVisual || STATE.grabState?.isDragging) return false;
   if (STATE.isListening) return false;
+  if ((performance.now() - (STATE.startedAt || 0)) < IDLE_FLOAT_STARTUP_BLOCK_MS) return false;
+  if (STATE.loadingOverlay?.classList.contains('visible')) return false;
   const entryOpen = UI.entryPanel && !UI.entryPanel.classList.contains('hidden');
   const historyOpen = UI.historyPanel && !UI.historyPanel.classList.contains('hidden');
   if (entryOpen || historyOpen) return false;
